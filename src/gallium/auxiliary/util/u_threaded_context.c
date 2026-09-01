@@ -5904,3 +5904,26 @@ threaded_context_is_buffer_on_busy_list(struct pipe_context *_pipe, struct pipe_
 
    return tc_is_buffer_on_busy_list(tc, tres);
 }
+
+bool
+threaded_context_is_resource_busy(struct pipe_context *pipe,
+                                  struct pipe_resource *resource,
+                                  unsigned usage)
+{
+   if (!pipe || !resource || !pipe->priv)
+      return true;
+
+   struct threaded_context *tc = threaded_context(pipe);
+   struct threaded_resource *tres = threaded_resource(resource);
+
+   if (!tc->options.is_resource_busy)
+      return true;
+
+   if (resource->target == PIPE_BUFFER)
+      return tc_is_buffer_busy(tc, tres, usage);
+
+   if (tc_resource_batch_usage_test_busy(tc, resource))
+      return true;
+
+   return tc->options.is_resource_busy(tc->pipe->screen, resource, usage);
+}

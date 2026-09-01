@@ -914,6 +914,14 @@ tc_set_vertex_elements_for_call(struct pipe_context *_pipe,
 
 bool
 threaded_context_is_buffer_on_busy_list(struct pipe_context *_pipe, struct pipe_resource *resource);
+
+/* Return whether queued or driver-submitted work prevents the requested CPU
+ * access. Contexts without a threaded busy callback are conservatively busy.
+ */
+bool
+threaded_context_is_resource_busy(struct pipe_context *pipe,
+                                  struct pipe_resource *resource,
+                                  unsigned usage);
 #ifdef __cplusplus
 }
 #endif

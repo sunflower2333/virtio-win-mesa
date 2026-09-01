@@ -1997,9 +1997,15 @@ ResourceIsStagingBusy(D3D10DDI_HDEVICE hDevice,       // IN
 {
    LOG_ENTRYPOINT();
 
-   /* ignore */
+   Device *device = CastDevice(hDevice);
+   Resource *resource = CastResource(hResource);
 
-   return false;
+   if (!device || !device->pipe || !resource || !resource->resource)
+      return TRUE;
+
+   return threaded_context_is_resource_busy(device->pipe,
+                                            resource->resource,
+                                            PIPE_MAP_READ) ? TRUE : FALSE;
 }
 
 

@@ -107,6 +107,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_offscreen_contract.py
 
+      - name: Verify staging busy source contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_zink_staging_busy.py
+
       - name: Verify Present bridge source contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_present_bridge.py
