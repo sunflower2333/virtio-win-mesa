@@ -2905,6 +2905,18 @@ CopyTessellationCode(Shader *pShader, const UINT *pCode)
    return true;
 }
 
+static void
+FailTessellationShaderCreation(D3D10DDI_HDEVICE hDevice, Shader *pShader,
+                               HRESULT error)
+{
+   FREE(pShader->tessellation_code);
+   pShader->tessellation_code = NULL;
+   pShader->tessellation_code_size = 0;
+   pShader->tessellation_properties_valid = false;
+   pShader->tessellation_compiled_properties_valid = false;
+   FailShaderCreation(hDevice, pShader, error);
+}
+
 static bool
 CaptureTessellationSignatures(
    Shader *pShader,
@@ -3070,7 +3082,7 @@ ShaderSupportsNativeTessellation(
    return true;
 }
 
-static void
+static bool
 InitD3D11TessellationShader(
    D3D10DDI_HDEVICE hDevice,
    const UINT *pCode,
@@ -3086,25 +3098,25 @@ InitD3D11TessellationShader(
       YTTRIUM_WARN("yttrium: d3d10umd rejected %s shader signature outside 32-register bounds\n",
                    ShaderStageName(stage));
       SetError(hDevice, E_INVALIDARG);
-      return;
+      return false;
    }
 
    if (!ShaderSupportsNativeTessellation(
           pCode, stage, stage == MESA_SHADER_TESS_CTRL ?
              &pShader->tessellation_properties : NULL)) {
       SetError(hDevice, E_INVALIDARG);
-      return;
+      return false;
    }
 
    if (!CopyTessellationCode(pShader, pCode)) {
       YTTRIUM_WARN("yttrium: d3d10umd failed to retain %s shader bytecode\n",
                    ShaderStageName(stage));
       SetError(hDevice, E_OUTOFMEMORY);
-      return;
+      return false;
    }
 
    if (stage == MESA_SHADER_TESS_EVAL)
-      return;
+      return true;
 
    pShader->tessellation_properties_valid = true;
    const struct Shader_tessellation_io_signatures signatures =
@@ -3116,15 +3128,18 @@ InitD3D11TessellationShader(
                             NULL);
    if (!pShader->state.tokens) {
       YTTRIUM_WARN("yttrium: d3d10umd hull shader translation failed\n");
-      SetError(hDevice, E_INVALIDARG);
-      return;
+      FailTessellationShaderCreation(hDevice, pShader, E_INVALIDARG);
+      return false;
    }
 
    pShader->handle = pipe->create_tcs_state(pipe, &pShader->state);
    if (!pShader->handle) {
       YTTRIUM_WARN("yttrium: d3d10umd hull shader state creation failed\n");
-      SetError(hDevice, E_FAIL);
+      FailTessellationShaderCreation(hDevice, pShader, E_OUTOFMEMORY);
+      return false;
    }
+
+   return true;
 }
 
 static bool
@@ -3243,9 +3258,12 @@ CreateHullShader(
    __in const D3D11DDIARG_TESSELLATION_IO_SIGNATURES *pSignatures)
 {
    LOG_ENTRYPOINT();
-   InitD3D11TessellationShader(hDevice, pCode, hShader,
-                               MESA_SHADER_TESS_CTRL, pSignatures);
-   CastShader(hShader)->tess_output_primitive =
+   Shader *pShader = CastShader(hShader);
+   if (!InitD3D11TessellationShader(hDevice, pCode, hShader,
+                                    MESA_SHADER_TESS_CTRL, pSignatures))
+      return;
+
+   pShader->tess_output_primitive =
       ShaderDecodeTessOutputPrimitive(pCode);
 }
 
