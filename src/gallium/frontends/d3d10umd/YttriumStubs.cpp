@@ -28,6 +28,8 @@ yttrium_trace_logf(uint32_t severity, const char *format, ...)
    (void)format;
 }
 
+}
+
 struct yttrium_venus *
 yttrium_venus_create(struct gdikmt_device *device)
 {
@@ -54,6 +56,8 @@ yttrium_venus_max_sampler_anisotropy(struct yttrium_venus *venus)
    (void)venus;
    return 1.0f;
 }
+
+extern "C" {
 
 void
 yttrium_gdi_flush_labeled(struct pipe_context *ctx,

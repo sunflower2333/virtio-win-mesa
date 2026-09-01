@@ -51,6 +51,13 @@ venus_reject = stubs_text.index("return NULL;", venus_create)
 venus_destroy = stubs_text.index("yttrium_venus_destroy", venus_create)
 if not venus_create < venus_reject < venus_destroy:
     raise AssertionError("non-Yttrium Venus creation is not fail-closed")
+
+trace_stub = stubs_text.index("yttrium_trace_logf")
+first_c_close = stubs_text.index("\n}\n", trace_stub)
+second_c_block = stubs_text.index('extern "C" {', venus_destroy)
+gdi_flush = stubs_text.index("yttrium_gdi_flush_labeled", second_c_block)
+if not trace_stub < first_c_close < venus_create < second_c_block < gdi_flush:
+    raise AssertionError("non-Yttrium stubs use the wrong language linkage")
 require(
     atomic_text,
     "defined(__clang__) && defined(USE_GCC_ATOMIC_BUILTINS)",
