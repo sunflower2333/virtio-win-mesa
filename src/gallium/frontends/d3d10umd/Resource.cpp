@@ -1046,6 +1046,10 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
    const bool has_primary_desc = pCreateResource->pPrimaryDesc != NULL;
    const bool zink_primary =
       zink && zink_present_is_primary(pCreateResource);
+   Resource *pResource = CastResource(hResource);
+   HRESULT creation_error = S_OK;
+
+   memset(pResource, 0, sizeof *pResource);
 
    if (!validate_resource_dimension(pCreateResource)) {
       SetError(hDevice, DXGI_DDI_ERR_UNSUPPORTED);
@@ -1117,9 +1121,6 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
    device->device.hRTResource = hRTResource.handle;
    device->device.hRTResourceIsD3D9 = false;
 
-   Resource *pResource = CastResource(hResource);
-
-   memset(pResource, 0, sizeof *pResource);
    pResource->yttrium_primary = yttrium && has_primary_desc;
 
    pResource->Format = pCreateResource->Format;
@@ -1181,37 +1182,34 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
           !try_resource_format_fallback(screen, &templat)) {
          debug_printf("%s: unsupported format %s\n",
                      __func__, util_format_name(templat.format));
-         SetError(hDevice, E_OUTOFMEMORY);
-         goto unlock;
+         creation_error = E_OUTOFMEMORY;
+         goto create_failure;
       }
    }
 
    pResource->resource = screen->resource_create(screen, &templat);
    if (!pResource->resource) {
       DebugPrintf("%s: failed to create resource\n", __func__);
-      SetError(hDevice, E_OUTOFMEMORY);
-      goto unlock;
+      creation_error = E_OUTOFMEMORY;
+      goto create_failure;
    }
+
+   pResource->NumSubResources =
+      pCreateResource->MipLevels * pCreateResource->ArraySize;
+   pResource->transfers = (struct pipe_transfer **)calloc(
+      pResource->NumSubResources, sizeof *pResource->transfers);
+   if (!pResource->transfers) {
+      DebugPrintf("%s: failed to allocate resource transfers\n", __func__);
+      creation_error = E_OUTOFMEMORY;
+      goto create_failure;
+   }
+
    if (!create_zink_present_allocation(device, pResource, pCreateResource)) {
       DebugPrintf("%s: failed to create paired Zink Present allocation\n",
                   __func__);
-      pipe_resource_reference(&pResource->resource, NULL);
-      SetError(hDevice, E_OUTOFMEMORY);
-      goto unlock;
+      creation_error = E_OUTOFMEMORY;
+      goto create_failure;
    }
-   ResourceEvent(RESOURCE_EVENT_CREATE,
-                 (uint64_t)(uintptr_t)hResource.pDrvPrivate,
-                 (const void *)(uintptr_t)hRTResource.handle,
-                 pResource->resource,
-                 p_atomic_read(&pResource->resource->reference.count),
-                 templat.bind,
-                 pCreateResource->BindFlags,
-                 pCreateResource->MiscFlags);
-
-   pResource->NumSubResources = pCreateResource->MipLevels * pCreateResource->ArraySize;
-   pResource->transfers = (struct pipe_transfer **)calloc(pResource->NumSubResources,
-                                                          sizeof *pResource->transfers);
-   RegisterResource(device, pResource, "create", hResource, hRTResource);
 
    if (pCreateResource->pInitialDataUP) {
       if (pResource->buffer) {
@@ -1223,24 +1221,25 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
          struct pipe_box box;
          subResourceBox(pResource->resource, 0, &level, &box);
 
-         struct pipe_transfer *transfer;
-         void *map;
-         map = pipe->buffer_map(pipe,
-                                pResource->resource,
-                                level,
-                                PIPE_MAP_WRITE |
-                                PIPE_MAP_UNSYNCHRONIZED,
-                                &box,
-                                &transfer);
-         assert(map);
-         if (map) {
-            memcpy(map, pInitialDataUP->pSysMem, box.width);
-            UpdateBufferShadow(pResource, box.x, box.width,
-                               pInitialDataUP->pSysMem);
-            pResource->constant_shadow_valid =
-               box.x == 0 && box.width == pResource->resource->width0;
-            pipe_buffer_unmap(pipe, transfer);
+         struct pipe_transfer *transfer = NULL;
+         void *map = pipe->buffer_map(pipe,
+                                      pResource->resource,
+                                      level,
+                                      PIPE_MAP_WRITE |
+                                      PIPE_MAP_UNSYNCHRONIZED,
+                                      &box,
+                                      &transfer);
+         if (!map) {
+            DebugPrintf("%s: failed to map initial buffer data\n", __func__);
+            creation_error = E_OUTOFMEMORY;
+            goto create_failure;
          }
+         memcpy(map, pInitialDataUP->pSysMem, box.width);
+         UpdateBufferShadow(pResource, box.x, box.width,
+                            pInitialDataUP->pSysMem);
+         pResource->constant_shadow_valid =
+            box.x == 0 && box.width == pResource->resource->width0;
+         pipe_buffer_unmap(pipe, transfer);
       } else {
          for (UINT SubResource = 0; SubResource < pResource->NumSubResources; ++SubResource) {
             const D3D10_DDIARG_SUBRESOURCE_UP* pInitialDataUP =
@@ -1250,33 +1249,50 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
             struct pipe_box box;
             subResourceBox(pResource->resource, SubResource, &level, &box);
 
-            struct pipe_transfer *transfer;
-            void *map;
-            map = pipe->texture_map(pipe,
-                                    pResource->resource,
-                                    level,
-                                    PIPE_MAP_WRITE |
-                                    PIPE_MAP_UNSYNCHRONIZED,
-                                    &box,
-                                    &transfer);
-            assert(map);
-            if (map) {
-               for (int z = 0; z < box.depth; ++z) {
-                  uint8_t *dst = (uint8_t*)map + z*transfer->layer_stride;
-                  const uint8_t *src = (const uint8_t*)pInitialDataUP->pSysMem + z*pInitialDataUP->SysMemSlicePitch;
-                  util_copy_rect(dst,
-                                 templat.format,
-                                 transfer->stride,
-                                 0, 0, box.width, box.height,
-                                 src,
-                                 pInitialDataUP->SysMemPitch,
-                                 0, 0);
-               }
-               pipe_texture_unmap(pipe, transfer);
+            struct pipe_transfer *transfer = NULL;
+            void *map = pipe->texture_map(pipe,
+                                          pResource->resource,
+                                          level,
+                                          PIPE_MAP_WRITE |
+                                          PIPE_MAP_UNSYNCHRONIZED,
+                                          &box,
+                                          &transfer);
+            if (!map) {
+               DebugPrintf("%s: failed to map initial texture data\n", __func__);
+               creation_error = E_OUTOFMEMORY;
+               goto create_failure;
             }
+            for (int z = 0; z < box.depth; ++z) {
+               uint8_t *dst = (uint8_t*)map + z*transfer->layer_stride;
+               const uint8_t *src = (const uint8_t*)pInitialDataUP->pSysMem + z*pInitialDataUP->SysMemSlicePitch;
+               util_copy_rect(dst,
+                              templat.format,
+                              transfer->stride,
+                              0, 0, box.width, box.height,
+                              src,
+                              pInitialDataUP->SysMemPitch,
+                              0, 0);
+            }
+            pipe_texture_unmap(pipe, transfer);
          }
       }
    }
+
+   ResourceEvent(RESOURCE_EVENT_CREATE,
+                 (uint64_t)(uintptr_t)hResource.pDrvPrivate,
+                 (const void *)(uintptr_t)hRTResource.handle,
+                 pResource->resource,
+                 p_atomic_read(&pResource->resource->reference.count),
+                 templat.bind,
+                 pCreateResource->BindFlags,
+                 pCreateResource->MiscFlags);
+   RegisterResource(device, pResource, "create", hResource, hRTResource);
+   goto unlock;
+
+create_failure:
+   ReleaseResourceContents(pipe, pResource);
+   release_zink_present_allocation(device, pResource);
+   SetError(hDevice, creation_error);
 
 unlock:
    device->device.allocationVidPn = 0;
@@ -1312,10 +1328,11 @@ CreateResource11(D3D10DDI_HDEVICE hDevice,
    CreateResource(hDevice, &create10, hResource, hRTResource);
 
    Resource *resource = CastResource(hResource);
-   if (resource) {
-      resource->MiscFlags = pCreateResource->MiscFlags;
-      resource->ByteStride = pCreateResource->ByteStride;
-   }
+   if (!resource || !resource->resource)
+      return;
+
+   resource->MiscFlags = pCreateResource->MiscFlags;
+   resource->ByteStride = pCreateResource->ByteStride;
 }
 
 void APIENTRY
