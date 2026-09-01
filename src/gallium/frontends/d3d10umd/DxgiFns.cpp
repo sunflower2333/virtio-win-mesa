@@ -795,90 +795,333 @@ _QueryResourceResidency( DXGI_DDI_ARG_QUERYRESOURCERESIDENCY *QueryResourceResid
  * ----------------------------------------------------------------------
  */
 
+struct dxgi_rotation_resource
+{
+   Resource *frontend;
+   struct pipe_resource *backing;
+   HANDLE zink_present_resource;
+   D3DKMT_HANDLE zink_present_allocation;
+   UINT zink_present_width;
+   UINT zink_present_height;
+   UINT zink_present_pitch;
+   bool zink_present_primary;
+};
+
+struct dxgi_rotation_sampler_view
+{
+   ShaderResourceView *view;
+   struct pipe_sampler_view *replacement;
+};
+
+static bool
+dxgi_device_owns_resource(Device *device, const Resource *candidate)
+{
+   if (!device || !candidate)
+      return false;
+
+   list_for_each_entry(Resource, resource, &device->resources, list) {
+      if (resource == candidate)
+         return true;
+   }
+
+   return false;
+}
+
+static int
+dxgi_rotation_resource_index(const struct dxgi_rotation_resource *resources,
+                             UINT count, const Resource *candidate)
+{
+   for (UINT i = 0; i < count; ++i) {
+      if (resources[i].frontend == candidate)
+         return (int)i;
+   }
+
+   return -1;
+}
+
+static int
+dxgi_rotation_backing_index(const struct dxgi_rotation_resource *resources,
+                            UINT count,
+                            const struct pipe_resource *candidate)
+{
+   for (UINT i = 0; i < count; ++i) {
+      if (resources[i].backing == candidate)
+         return (int)i;
+   }
+
+   return -1;
+}
+
+static void
+dxgi_release_rotation_sampler_views(
+   struct dxgi_rotation_sampler_view *views, size_t count)
+{
+   if (!views)
+      return;
+
+   for (size_t i = 0; i < count; ++i)
+      pipe_sampler_view_reference(&views[i].replacement, NULL);
+}
+
 HRESULT APIENTRY
 _RotateResourceIdentities(DXGI_DDI_ARG_ROTATE_RESOURCE_IDENTITIES *RotateResourceIdentities )
 {
    LOG_ENTRYPOINT();
 
-   Device *device = CastDevice(RotateResourceIdentities->hDevice);
-   const bool trace = dxgi_trace_enabled(device);
+   if (!RotateResourceIdentities)
+      return E_INVALIDARG;
 
+   Device *device = CastDevice(RotateResourceIdentities->hDevice);
+   if (!device || !device->pipe)
+      return E_INVALIDARG;
+
+   const UINT NumResources = RotateResourceIdentities->Resources;
+   const DXGI_DDI_HRESOURCE *hResources = RotateResourceIdentities->pResources;
+   if (!NumResources)
+      return S_OK;
+   if (!hResources ||
+       NumResources > SIZE_MAX / sizeof(struct dxgi_rotation_resource) ||
+       NumResources > SIZE_MAX / sizeof(struct pipe_resource *))
+      return E_INVALIDARG;
+
+   struct dxgi_rotation_resource *resources =
+      (struct dxgi_rotation_resource *)calloc(NumResources,
+                                               sizeof(*resources));
+   struct pipe_resource **backings =
+      (struct pipe_resource **)calloc(NumResources, sizeof(*backings));
+   if (!resources || !backings) {
+      free(backings);
+      free(resources);
+      return E_OUTOFMEMORY;
+   }
+
+   HRESULT result = E_INVALIDARG;
+   UINT paired_count = 0;
+   size_t sampler_view_count = 0;
+   size_t sampler_view_index = 0;
+   struct dxgi_rotation_sampler_view *sampler_views = NULL;
+   bool trace = false;
+   bool framebuffer_rotated = false;
+   for (UINT i = 0; i < NumResources; ++i) {
+      Resource *resource = reinterpret_cast<Resource *>(hResources[i]);
+      if (!dxgi_device_owns_resource(device, resource) ||
+          !resource->resource)
+         goto cleanup;
+
+      resources[i].frontend = resource;
+      resources[i].backing = resource->resource;
+      resources[i].zink_present_resource = resource->zink_present_resource;
+      resources[i].zink_present_allocation =
+         resource->zink_present_allocation;
+      resources[i].zink_present_width = resource->zink_present_width;
+      resources[i].zink_present_height = resource->zink_present_height;
+      resources[i].zink_present_pitch = resource->zink_present_pitch;
+      resources[i].zink_present_primary = resource->zink_present_primary;
+      backings[i] = resource->resource;
+
+      const bool has_paired_identity =
+         resource->zink_present_resource ||
+         resource->zink_present_allocation ||
+         resource->zink_present_width || resource->zink_present_height ||
+         resource->zink_present_pitch || resource->zink_present_primary;
+      if (has_paired_identity) {
+         if (!dxgi_is_zink_screen(device) ||
+             !resource->zink_present_resource ||
+             !resource->zink_present_allocation ||
+             !resource->zink_present_width ||
+             !resource->zink_present_height ||
+             resource->zink_present_width > UINT_MAX / 4 ||
+             resource->zink_present_pitch !=
+                resource->zink_present_width * 4 ||
+             resource->resource->target != PIPE_TEXTURE_2D ||
+             resource->resource->width0 != resource->zink_present_width ||
+             resource->resource->height0 != resource->zink_present_height)
+            goto cleanup;
+         ++paired_count;
+      }
+
+      for (UINT j = 0; j < i; ++j) {
+         if (resources[j].frontend == resource ||
+             resources[j].backing == resource->resource)
+            goto cleanup;
+         if (has_paired_identity &&
+             (resources[j].zink_present_resource ==
+                 resource->zink_present_resource ||
+              resources[j].zink_present_allocation ==
+                 resource->zink_present_allocation))
+            goto cleanup;
+      }
+   }
+
+   if ((paired_count && paired_count != NumResources) ||
+       (dxgi_is_zink_screen(device) && paired_count != NumResources))
+      goto cleanup;
+
+   if (NumResources == 1) {
+      result = S_OK;
+      goto cleanup;
+   }
+
+   list_for_each_entry(ShaderResourceView, view,
+                       &device->shader_resource_view_objects, list) {
+      if (dxgi_rotation_resource_index(resources, NumResources,
+                                       view->resource) < 0)
+         continue;
+      if (!view->handle || !view->handle->texture)
+         goto cleanup;
+      ++sampler_view_count;
+   }
+
+   list_for_each_entry(RenderTargetView, view,
+                       &device->render_target_views, list) {
+      if (dxgi_rotation_resource_index(resources, NumResources,
+                                       view->resource) >= 0 &&
+          !view->surface.texture)
+         goto cleanup;
+   }
+
+   list_for_each_entry(DepthStencilView, view,
+                       &device->depth_stencil_views, list) {
+      if (dxgi_rotation_resource_index(resources, NumResources,
+                                       view->resource) >= 0 &&
+          !view->surface.texture)
+         goto cleanup;
+   }
+
+   list_for_each_entry(UnorderedAccessView, view,
+                       &device->unordered_access_view_objects, list) {
+      if (dxgi_rotation_resource_index(resources, NumResources,
+                                       view->resource) >= 0 &&
+          (!view->pipe_resource ||
+           view->image.resource != view->pipe_resource))
+         goto cleanup;
+   }
+
+   if (sampler_view_count) {
+      if (sampler_view_count > SIZE_MAX / sizeof(*sampler_views)) {
+         result = E_OUTOFMEMORY;
+         goto cleanup;
+      }
+      sampler_views = (struct dxgi_rotation_sampler_view *)calloc(
+         sampler_view_count, sizeof(*sampler_views));
+      if (!sampler_views) {
+         result = E_OUTOFMEMORY;
+         goto cleanup;
+      }
+   }
+
+   list_for_each_entry(ShaderResourceView, view,
+                       &device->shader_resource_view_objects, list) {
+      const int index = dxgi_rotation_resource_index(
+         resources, NumResources, view->resource);
+      if (index < 0)
+         continue;
+
+      const UINT next = ((UINT)index + 1) % NumResources;
+      struct pipe_sampler_view *replacement =
+         device->pipe->create_sampler_view(device->pipe,
+                                            resources[next].backing,
+                                            view->handle);
+      if (!replacement) {
+         result = E_OUTOFMEMORY;
+         goto cleanup;
+      }
+      sampler_views[sampler_view_index].view = view;
+      sampler_views[sampler_view_index].replacement = replacement;
+      ++sampler_view_index;
+   }
+
+   trace = dxgi_trace_enabled(device);
    if (trace) {
       dxgi_trace_printf(device,
                         "d3d10umd: dxgi RotateResourceIdentities count=%u\n",
-                        RotateResourceIdentities->Resources);
-      for (UINT i = 0; i < RotateResourceIdentities->Resources; ++i) {
+                        NumResources);
+      for (UINT i = 0; i < NumResources; ++i) {
          char label[64];
          snprintf(label, sizeof(label), "Rotate before[%u]", i);
-         dxgi_trace_resource(device, label,
-                             CastResource(RotateResourceIdentities->pResources[i]));
+         dxgi_trace_resource(device, label, resources[i].frontend);
       }
    }
-
-   if (RotateResourceIdentities->Resources <= 1) {
-      return S_OK;
-   }
-   UINT NumResources = RotateResourceIdentities->Resources;
-   const DXGI_DDI_HRESOURCE *hResources = RotateResourceIdentities->pResources;
 
    if (dxgi_is_yttrium_screen(device)) {
-      if (NumResources > DXGI_MAX_SWAP_CHAIN_BUFFERS) {
-         yttrium_gdi_user_logf(
-            "yttrium: ERROR: DXGI runtime-handle rotation rejected "
-            "owner=d3d10umd-dxgi component=RotateResourceIdentities "
-            "reason=resource-count-exceeds-DXGI-limit action=abort "
-            "count=%u limit=%u\n",
-            NumResources, DXGI_MAX_SWAP_CHAIN_BUFFERS);
-         return E_INVALIDARG;
-      }
-
-      struct pipe_resource *resources[DXGI_MAX_SWAP_CHAIN_BUFFERS];
-
-      for (UINT i = 0; i < NumResources; ++i)
-         resources[i] = CastPipeResource(hResources[i]);
-
       const bool handles_rotated =
-         yttrium_gdi_resource_rotate_runtime_handles(resources, NumResources);
-      if (!handles_rotated)
-         return E_FAIL;
+         yttrium_gdi_resource_rotate_runtime_handles(backings, NumResources);
+      if (!handles_rotated) {
+         result = E_FAIL;
+         goto cleanup;
+      }
    }
 
-   bool framebuffer_rotated = false;
+   for (UINT i = 0; i < NumResources; ++i) {
+      const UINT next = (i + 1) % NumResources;
+      Resource *resource = resources[i].frontend;
+      resource->resource = resources[next].backing;
+      if (paired_count) {
+         resource->zink_present_allocation =
+            resources[next].zink_present_allocation;
+         resource->zink_present_width = resources[next].zink_present_width;
+         resource->zink_present_height = resources[next].zink_present_height;
+         resource->zink_present_pitch = resources[next].zink_present_pitch;
+         resource->zink_present_primary =
+            resources[next].zink_present_primary;
+      }
+   }
+
+   for (size_t i = 0; i < sampler_view_count; ++i) {
+      pipe_sampler_view_reference(&sampler_views[i].view->handle,
+                                  sampler_views[i].replacement);
+      pipe_sampler_view_reference(&sampler_views[i].replacement, NULL);
+   }
+
+   list_for_each_entry(RenderTargetView, view,
+                       &device->render_target_views, list) {
+      if (dxgi_rotation_resource_index(resources, NumResources,
+                                       view->resource) >= 0)
+         pipe_resource_reference(&view->surface.texture,
+                                 view->resource->resource);
+   }
+
+   list_for_each_entry(DepthStencilView, view,
+                       &device->depth_stencil_views, list) {
+      if (dxgi_rotation_resource_index(resources, NumResources,
+                                       view->resource) >= 0)
+         pipe_resource_reference(&view->surface.texture,
+                                 view->resource->resource);
+   }
+
+   list_for_each_entry(UnorderedAccessView, view,
+                       &device->unordered_access_view_objects, list) {
+      if (dxgi_rotation_resource_index(resources, NumResources,
+                                       view->resource) < 0)
+         continue;
+      pipe_resource_reference(&view->pipe_resource,
+                              view->resource->resource);
+      view->image.resource = view->pipe_resource;
+   }
+
    for (UINT binding = 0; binding < device->fb.nr_cbufs; ++binding) {
       struct pipe_resource **texture = &device->fb.cbufs[binding].texture;
-      for (UINT i = 0; i < NumResources; ++i) {
-         if (*texture != CastPipeResource(hResources[i]))
-            continue;
-
+      const int index =
+         dxgi_rotation_backing_index(resources, NumResources, *texture);
+      if (index >= 0) {
+         const UINT next = ((UINT)index + 1) % NumResources;
          pipe_resource_reference(
-            texture, CastPipeResource(hResources[(i + 1) % NumResources]));
+            texture, resources[next].backing);
          framebuffer_rotated = true;
-         break;
       }
    }
 
    if (device->fb.zsbuf.texture) {
-      for (UINT i = 0; i < NumResources; ++i) {
-         if (device->fb.zsbuf.texture != CastPipeResource(hResources[i]))
-            continue;
-
+      const int index = dxgi_rotation_backing_index(
+         resources, NumResources, device->fb.zsbuf.texture);
+      if (index >= 0) {
+         const UINT next = ((UINT)index + 1) % NumResources;
          pipe_resource_reference(
             &device->fb.zsbuf.texture,
-            CastPipeResource(hResources[(i + 1) % NumResources]));
+            resources[next].backing);
          framebuffer_rotated = true;
-         break;
       }
    }
-
-   struct pipe_resource *firstResource = CastPipeResource(hResources[0]);
-
-   for (UINT i = 0; i < (NumResources - 1); ++i) {
-      Resource* resource = CastResource(hResources[i]);
-      resource->resource = CastPipeResource(hResources[i + 1]);
-   }
-
-   Resource *lastResource = CastResource(hResources[NumResources - 1]);
-   lastResource->resource = firstResource;
 
    if (framebuffer_rotated)
       device->pipe->set_framebuffer_state(device->pipe, &device->fb);
@@ -886,22 +1129,30 @@ _RotateResourceIdentities(DXGI_DDI_ARG_ROTATE_RESOURCE_IDENTITIES *RotateResourc
    if (dxgi_is_yttrium_screen(device)) {
       for (UINT i = 0; i < NumResources; ++i) {
          dxgi_sync_yttrium_primary_identity(device,
-                                            CastResource(hResources[i]));
+                                            resources[i].frontend);
       }
    }
 
    device->shader_resource_views_dirty = true;
+   RefreshBoundShaderResourceViews(device);
+   RefreshBoundUnorderedAccessViews(device);
 
    if (trace) {
-      for (UINT i = 0; i < RotateResourceIdentities->Resources; ++i) {
+      for (UINT i = 0; i < NumResources; ++i) {
          char label[64];
          snprintf(label, sizeof(label), "Rotate after[%u]", i);
-         dxgi_trace_resource(device, label,
-                             CastResource(RotateResourceIdentities->pResources[i]));
+         dxgi_trace_resource(device, label, resources[i].frontend);
       }
    }
 
-   return S_OK;
+   result = S_OK;
+
+cleanup:
+   dxgi_release_rotation_sampler_views(sampler_views, sampler_view_count);
+   free(sampler_views);
+   free(backings);
+   free(resources);
+   return result;
 }
 
 

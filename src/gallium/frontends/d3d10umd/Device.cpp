@@ -882,6 +882,10 @@ CreateDevice(D3D10DDI_HADAPTER hAdapter,                 // IN
 
    mtx_init(&pDevice->CreateResourceMtx, mtx_plain);
    list_inithead(&pDevice->resources);
+   list_inithead(&pDevice->render_target_views);
+   list_inithead(&pDevice->depth_stencil_views);
+   list_inithead(&pDevice->shader_resource_view_objects);
+   list_inithead(&pDevice->unordered_access_view_objects);
 
    struct pipe_screen *screen = d3d10_create_screen(&pDevice->device.base);
    if (!screen) {

@@ -175,6 +175,10 @@ struct Device
    
    mtx_t CreateResourceMtx;
    struct list_head resources;
+   struct list_head render_target_views;
+   struct list_head depth_stencil_views;
+   struct list_head shader_resource_view_objects;
+   struct list_head unordered_access_view_objects;
 };
 
 
@@ -301,6 +305,7 @@ PipeResourceRefCount(struct pipe_resource *resource)
 
 struct RenderTargetView
 {
+   struct list_head list;
    struct pipe_surface surface;
    Resource* resource; //akre
    D3D10DDI_HRTRENDERTARGETVIEW hRTRenderTargetView;
@@ -324,7 +329,9 @@ CastPipeRenderTargetView(D3D10DDI_HRENDERTARGETVIEW hRenderTargetView)
 
 struct DepthStencilView
 {
+   struct list_head list;
    struct pipe_surface surface;
+   Resource *resource;
    D3D10DDI_HRTDEPTHSTENCILVIEW hRTDepthStencilView;
 };
 
@@ -460,6 +467,7 @@ CastPipeSamplerState(D3D10DDI_HSAMPLER hSampler)
 
 struct ShaderResourceView
 {
+   struct list_head list;
    struct pipe_sampler_view *handle;
    Resource *resource;
    bool buffer_raw;
@@ -487,6 +495,7 @@ CastPipeShaderResourceView(D3D10DDI_HSHADERRESOURCEVIEW hShaderResourceView)
 
 struct UnorderedAccessView
 {
+   struct list_head list;
    struct pipe_resource *pipe_resource;
    struct pipe_image_view image;
    enum pipe_format clear_format;

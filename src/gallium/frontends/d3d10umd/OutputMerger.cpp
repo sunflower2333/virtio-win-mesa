@@ -83,6 +83,20 @@ GetPipeRenderTargetView(D3D10DDI_HRENDERTARGETVIEW hRenderTargetView)
    return &pRenderTargetView->surface;
 }
 
+static inline struct pipe_surface *
+GetPipeDepthStencilView(D3D10DDI_HDEPTHSTENCILVIEW hDepthStencilView)
+{
+   DepthStencilView *view = CastDepthStencilView(hDepthStencilView);
+   if (!view)
+      return NULL;
+
+   if (view->resource && view->surface.texture != view->resource->resource)
+      pipe_resource_reference(&view->surface.texture,
+                              view->resource->resource);
+
+   return &view->surface;
+}
+
 static bool
 IsYttriumScreen(struct pipe_screen *screen)
 {
@@ -339,6 +353,7 @@ CreateRenderTargetView(
 
    struct pipe_resource *resource = CastPipeResource(pCreateRenderTargetView->hDrvResource);
    RenderTargetView *pRTView = CastRenderTargetView(hRenderTargetView);
+   list_inithead(&pRTView->list);
    pRTView->resource = CastResource(pCreateRenderTargetView->hDrvResource);
 
    if (debug_get_option_rt_trace()) {
@@ -411,6 +426,8 @@ CreateRenderTargetView(
                  pCreateRenderTargetView->Format,
                  pCreateRenderTargetView->ResourceDimension,
                  (uint64_t)(uintptr_t)pRTView->resource);
+   list_addtail(&pRTView->list,
+                &CastDevice(hDevice)->render_target_views);
 }
 
 
@@ -441,6 +458,8 @@ DestroyRenderTargetView(D3D10DDI_HDEVICE hDevice,                       // IN
                  pRTView ? PipeResourceRefCount(pRTView->surface.texture) : 0,
                  0, 0,
                  (uint64_t)(uintptr_t)(pRTView ? pRTView->resource : NULL));
+   if (!list_is_empty(&pRTView->list))
+      list_delinit(&pRTView->list);
    pipe_resource_reference(&pRTView->surface.texture, NULL);
 }
 
@@ -591,6 +610,8 @@ CreateDepthStencilView(
 
    struct pipe_resource *resource = CastPipeResource(pCreateDepthStencilView->hDrvResource);
    DepthStencilView *pDSView = CastDepthStencilView(hDepthStencilView);
+   list_inithead(&pDSView->list);
+   pDSView->resource = CastResource(pCreateDepthStencilView->hDrvResource);
 
    struct pipe_surface desc;
 
@@ -636,6 +657,8 @@ CreateDepthStencilView(
                  pCreateDepthStencilView->Format,
                  pCreateDepthStencilView->ResourceDimension,
                  0);
+   list_addtail(&pDSView->list,
+                &CastDevice(hDevice)->depth_stencil_views);
 }
 
 void APIENTRY
@@ -695,6 +718,8 @@ DestroyDepthStencilView(D3D10DDI_HDEVICE hDevice,                       // IN
                  pDSView ? pDSView->surface.texture : NULL,
                  pDSView ? PipeResourceRefCount(pDSView->surface.texture) : 0,
                  0, 0, 0);
+   if (!list_is_empty(&pDSView->list))
+      list_delinit(&pDSView->list);
    pipe_resource_reference(&pDSView->surface.texture, NULL);
 }
 
@@ -720,7 +745,7 @@ ClearDepthStencilView(D3D10DDI_HDEVICE hDevice,                      // IN
    LOG_ENTRYPOINT();
 
    struct pipe_context *pipe = CastPipeContext(hDevice);
-   struct pipe_surface *surface = CastPipeDepthStencilView(hDepthStencilView);
+   struct pipe_surface *surface = GetPipeDepthStencilView(hDepthStencilView);
 
    unsigned flags = 0;
    if (Flags & D3D10_DDI_CLEAR_DEPTH) {
@@ -1279,7 +1304,7 @@ SetRenderTargetsImpl(D3D10DDI_HDEVICE hDevice,                              // I
       pipe_resource_reference(&pDevice->fb.cbufs[i].texture, NULL);
    }
 
-   struct pipe_surface *zsbuf = CastPipeDepthStencilView(hDepthStencilView);
+   struct pipe_surface *zsbuf = GetPipeDepthStencilView(hDepthStencilView);
    pipe_resource_reference(&pDevice->fb.zsbuf.texture, zsbuf && zsbuf->texture ? zsbuf->texture : NULL);
    ResourceEvent(RESOURCE_EVENT_SET_DEPTH_STENCIL,
                  (uint64_t)(uintptr_t)hDepthStencilView.pDrvPrivate,

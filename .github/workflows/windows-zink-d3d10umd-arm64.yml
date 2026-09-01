@@ -139,6 +139,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_dxgi_set_display_mode.py
 
+      - name: Verify DXGI resource identity rotation source contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_dxgi_rotate_resource_identities.py
+
       - name: Configure ARM64 Zink D3D UMD
         shell: pwsh
         run: |

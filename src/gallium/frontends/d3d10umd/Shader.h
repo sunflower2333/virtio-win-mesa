@@ -252,6 +252,7 @@ void APIENTRY ShaderResourceViewReadAfterWriteHazard(
    D3D10DDI_HRESOURCE hResource);
 
 void RefreshBoundShaderResourceViews(Device *pDevice);
+void RefreshBoundUnorderedAccessViews(Device *pDevice);
 
 SIZE_T APIENTRY CalcPrivateShaderResourceViewSize(
    D3D10DDI_HDEVICE hDevice,

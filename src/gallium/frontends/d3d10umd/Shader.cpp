@@ -1535,6 +1535,43 @@ RefreshBoundShaderResourceViews(Device *pDevice)
    }
 }
 
+void
+RefreshBoundUnorderedAccessViews(Device *pDevice)
+{
+   if (!pDevice || !pDevice->pipe)
+      return;
+
+   for (unsigned stage = 0; stage < MESA_SHADER_STAGES; ++stage) {
+      unsigned first_changed = PIPE_MAX_SHADER_IMAGES;
+      unsigned last_changed = 0;
+
+      for (unsigned slot = 0; slot < PIPE_MAX_SHADER_IMAGES; ++slot) {
+         UnorderedAccessView *view =
+            pDevice->unordered_access_views[stage][slot];
+         if (!view ||
+             pDevice->shader_images[stage][slot].resource ==
+                view->image.resource)
+            continue;
+
+         pDevice->shader_images[stage][slot] = view->image;
+         first_changed = MIN2(first_changed, slot);
+         last_changed = slot;
+      }
+
+      if (first_changed == PIPE_MAX_SHADER_IMAGES)
+         continue;
+
+      pDevice->pipe->set_shader_images(
+         pDevice->pipe, (mesa_shader_stage)stage, first_changed,
+         last_changed - first_changed + 1, 0,
+         &pDevice->shader_images[stage][first_changed]);
+      UpdateBufferInfoUavConstants(
+         pDevice, (mesa_shader_stage)stage, first_changed,
+         last_changed - first_changed + 1);
+      UpdateBufferInfoConstants(pDevice, (mesa_shader_stage)stage);
+   }
+}
+
 
 /*
  * ----------------------------------------------------------------------
@@ -3537,7 +3574,8 @@ CreateShaderResourceView(
    ShaderResourceView *pSRView = CastShaderResourceView(hShaderResourceView);
    struct pipe_resource *resource;
    enum pipe_format format;
-   
+
+   list_inithead(&pSRView->list);
    pSRView->resource = CastResource(pCreateSRView->hDrvResource);
    pSRView->buffer_raw = false;
    pSRView->buffer_structured = false;
@@ -3623,6 +3661,8 @@ CreateShaderResourceView(
                  pCreateSRView->Format,
                  pCreateSRView->ResourceDimension,
                  (uint64_t)(uintptr_t)pSRView->handle);
+   list_addtail(&pSRView->list,
+                &CastDevice(hDevice)->shader_resource_view_objects);
 }
 
 
@@ -3651,6 +3691,7 @@ CreateShaderResourceView1(
    struct pipe_resource *resource;
    enum pipe_format format;
 
+   list_inithead(&pSRView->list);
    pSRView->resource = CastResource(pCreateSRView->hDrvResource);
    pSRView->buffer_raw = false;
    pSRView->buffer_structured = false;
@@ -3738,6 +3779,8 @@ CreateShaderResourceView1(
                  pCreateSRView->Format,
                  pCreateSRView->ResourceDimension,
                  (uint64_t)(uintptr_t)pSRView->handle);
+   list_addtail(&pSRView->list,
+                &CastDevice(hDevice)->shader_resource_view_objects);
 }
 
 void APIENTRY
@@ -3828,6 +3871,8 @@ DestroyShaderResourceView(D3D10DDI_HDEVICE hDevice,                           //
                     PipeResourceRefCount(pSRView->handle->texture) : 0,
                  0, 0,
                  (uint64_t)(uintptr_t)(pSRView ? pSRView->handle : NULL));
+   if (!list_is_empty(&pSRView->list))
+      list_delinit(&pSRView->list);
    pipe->sampler_view_release(pipe, pSRView->handle);
    pSRView->handle = NULL;
 }
@@ -3871,6 +3916,7 @@ CreateUnorderedAccessView(
 
    UnorderedAccessView *pUAView =
       CastUnorderedAccessView(hUnorderedAccessView);
+   list_inithead(&pUAView->list);
    pUAView->resource = CastResource(pCreateUAView->hDrvResource);
    pUAView->buffer_raw = false;
    pUAView->buffer_structured = false;
@@ -3949,6 +3995,9 @@ CreateUnorderedAccessView(
       LOG_UNSUPPORTED(true);
       break;
    }
+
+   list_addtail(&pUAView->list,
+                &CastDevice(hDevice)->unordered_access_view_objects);
 }
 
 void APIENTRY
@@ -3963,6 +4012,8 @@ DestroyUnorderedAccessView(
    if (!pUAView)
       return;
 
+   if (!list_is_empty(&pUAView->list))
+      list_delinit(&pUAView->list);
    pipe_resource_reference(&pUAView->pipe_resource, NULL);
    pUAView->resource = NULL;
 }
