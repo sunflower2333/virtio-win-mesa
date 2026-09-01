@@ -53,10 +53,22 @@ if not venus_create < venus_reject < venus_destroy:
     raise AssertionError("non-Yttrium Venus creation is not fail-closed")
 
 trace_stub = stubs_text.index("yttrium_trace_logf")
-first_c_close = stubs_text.index("\n}\n", trace_stub)
-second_c_block = stubs_text.index('extern "C" {', venus_destroy)
-gdi_flush = stubs_text.index("yttrium_gdi_flush_labeled", second_c_block)
-if not trace_stub < first_c_close < venus_create < second_c_block < gdi_flush:
+venus_header = stubs_text.index(
+    '#include "gallium/winsys/yttrium/gdi/yttrium_venus.h"'
+)
+venus_header_c_block = stubs_text.rfind('extern "C" {', 0, venus_header)
+venus_header_c_close = stubs_text.index("\n}\n", venus_header)
+stub_c_block = stubs_text.index('extern "C" {', venus_header_c_close)
+gdi_flush = stubs_text.index("yttrium_gdi_flush_labeled", venus_destroy)
+if not (
+    venus_header_c_block
+    < venus_header
+    < venus_header_c_close
+    < stub_c_block
+    < trace_stub
+    < venus_create
+    < gdi_flush
+):
     raise AssertionError("non-Yttrium stubs use the wrong language linkage")
 require(
     atomic_text,

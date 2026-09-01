@@ -5,7 +5,10 @@
 
 #include "gallium/winsys/yttrium/gdi/yttrium_gdi_public.h"
 #include "gallium/winsys/yttrium/gdi/yttrium_trace.h"
+
+extern "C" {
 #include "gallium/winsys/yttrium/gdi/yttrium_venus.h"
+}
 
 #include "pipe/p_context.h"
 #include "util/u_debug.h"
@@ -26,8 +29,6 @@ yttrium_trace_logf(uint32_t severity, const char *format, ...)
 {
    (void)severity;
    (void)format;
-}
-
 }
 
 struct yttrium_venus *
@@ -56,8 +57,6 @@ yttrium_venus_max_sampler_anisotropy(struct yttrium_venus *venus)
    (void)venus;
    return 1.0f;
 }
-
-extern "C" {
 
 void
 yttrium_gdi_flush_labeled(struct pipe_context *ctx,
