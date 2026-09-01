@@ -135,6 +135,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_dxgi_offer_reclaim.py
 
+      - name: Verify DXGI SetDisplayMode source contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_dxgi_set_display_mode.py
+
       - name: Configure ARM64 Zink D3D UMD
         shell: pwsh
         run: |

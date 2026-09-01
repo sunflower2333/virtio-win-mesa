@@ -609,9 +609,19 @@ HRESULT APIENTRY
 _SetDisplayMode( DXGI_DDI_ARG_SETDISPLAYMODE *SetDisplayMode )
 {
    LOG_ENTRYPOINT();
-   
+
+   if (!SetDisplayMode)
+      return E_INVALIDARG;
+
    Device* device = CastDevice(SetDisplayMode->hDevice);
    Resource *res = CastResource(SetDisplayMode->hResource);
+   if (!device || !device->screen || !res || !res->resource ||
+       SetDisplayMode->SubResourceIndex >= res->NumSubResources)
+      return E_INVALIDARG;
+   if (!device->device.base.setDisplayMode ||
+       !device->device.KTCallbacks.pfnSetDisplayModeCb)
+      return E_NOTIMPL;
+
    const bool trace = dxgi_trace_enabled(device);
 
    if (trace) {
@@ -623,7 +633,8 @@ _SetDisplayMode( DXGI_DDI_ARG_SETDISPLAYMODE *SetDisplayMode )
       dxgi_trace_resource(device, "SetDisplayMode", res);
    }
 
-   D3DKMT_HANDLE kmt_handle = GetZinkPresentAllocation(res);
+   D3DKMT_HANDLE kmt_handle =
+      res->zink_present_primary ? GetZinkPresentAllocation(res) : 0;
    unsigned stride = res ? res->zink_present_pitch : 0;
    uint64_t size = res ? (uint64_t)res->zink_present_pitch *
                            res->zink_present_height : 0;
@@ -631,32 +642,34 @@ _SetDisplayMode( DXGI_DDI_ARG_SETDISPLAYMODE *SetDisplayMode )
       struct winsys_handle handle;
       memset(&handle, 0, sizeof(handle));
       handle.type = WINSYS_HANDLE_TYPE_D3DKMT_ALLOC;
-      if (!device->screen->resource_get_handle ||
-          !device->screen->resource_get_handle(device->screen, NULL,
-                                               res->resource, &handle, 0)) {
+      if (!device->screen->resource_get_handle)
+         return E_NOTIMPL;
+      if (!device->screen->resource_get_handle(device->screen, NULL,
+                                               res->resource, &handle, 0) ||
+          !handle.handle) {
          LOG_UNSUPPORTED_ENTRYPOINT();
          if (trace) {
             dxgi_trace_printf(device,
-                              "d3d10umd: dxgi SetDisplayMode skipped: allocation handle missing\n");
+                              "d3d10umd: dxgi SetDisplayMode failed: allocation handle missing\n");
          }
-         return S_OK;
+         return E_FAIL;
       }
       kmt_handle = (D3DKMT_HANDLE)(uintptr_t)handle.handle;
       stride = handle.stride;
       size = handle.size;
    }
-   NTSTATUS status =
+   HRESULT result =
       device->device.base.setDisplayMode(&device->device.base, kmt_handle);
    if (trace) {
       dxgi_trace_printf(device,
                         "d3d10umd: dxgi SetDisplayMode hAllocation=0x%lx status=0x%lx stride=%u size=0x%llx\n",
                         (unsigned long)kmt_handle,
-                        status,
+                        (unsigned long)result,
                         stride,
                         (unsigned long long)size);
    }
 
-   return S_OK;
+   return result;
 }
 
 
