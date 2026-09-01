@@ -12,6 +12,7 @@ on:
       - "src/gallium/drivers/zink/**"
       - "src/gallium/frontends/d3d10umd/**"
       - "src/gallium/targets/d3d10umd/**"
+      - "src/util/u_atomic.h"
       - ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 
 permissions:
