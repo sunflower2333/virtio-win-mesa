@@ -4036,7 +4036,11 @@ CreateUnorderedAccessView(
    }
    default:
       LOG_UNSUPPORTED(true);
-      break;
+      pUAView->image.resource = NULL;
+      pipe_resource_reference(&pUAView->pipe_resource, NULL);
+      pUAView->resource = NULL;
+      SetError(hDevice, E_INVALIDARG);
+      return;
    }
 
    list_addtail(&pUAView->list,
