@@ -80,6 +80,10 @@ void APIENTRY OpenResource(
 
 void APIENTRY DestroyResource(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource);
 
+D3DKMT_HANDLE GetZinkPresentAllocation(const Resource *resource);
+HRESULT PublishZinkPresentResource(Device *device, Resource *resource,
+                                   UINT subresource);
+
 void DestroyDeviceResourceDiagnostics(D3D10DDI_HDEVICE hDevice);
 
 void APIENTRY ResourceMap(D3D10DDI_HDEVICE hDevice, D3D10DDI_HRESOURCE hResource,

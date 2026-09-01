@@ -35,6 +35,7 @@
 #include "Format.h"
 #include "State.h"
 #include "Query.h"
+#include "VioGpuWddmPresentAbi.h"
 
 #include "Debug.h"
 
@@ -825,6 +826,199 @@ subResourceBox(struct pipe_resource *resource, // IN
    pBox->depth  = depth;
 }
 
+static uint32_t
+zink_present_format(DXGI_FORMAT format)
+{
+   switch (format) {
+   case DXGI_FORMAT_B8G8R8A8_UNORM:
+   case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+   case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+      return VIOGPU_WDDM_FORMAT_B8G8R8A8_UNORM;
+   case DXGI_FORMAT_B8G8R8X8_UNORM:
+   case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+   case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+      return VIOGPU_WDDM_FORMAT_B8G8R8X8_UNORM;
+   default:
+      return 0;
+   }
+}
+
+static bool
+zink_present_is_primary(
+   const D3D10DDIARG_CREATERESOURCE *create_resource)
+{
+   return create_resource->pPrimaryDesc &&
+          !(create_resource->pPrimaryDesc->Flags & DXGI_DDI_PRIMARY_OPTIONAL);
+}
+
+static bool
+ensure_zink_present_context(Device *device)
+{
+   if (device->zink_present_context)
+      return true;
+   if (!device->device.base.createContext)
+      return false;
+
+   /* The current KMD requires both engine affinity one and the explicit GDI
+    * context flag. GDI contexts carry no private create payload. */
+   device->device.use_legacy_signal_sync = true;
+   device->device.create_gdi_context = true;
+   NTSTATUS status = device->device.base.createContext(
+      &device->device.base, &device->zink_present_context);
+   if (!NT_SUCCESS(status) || !device->zink_present_context) {
+      DebugPrintf("Zink Present context creation failed: 0x%08lx\n",
+                  (unsigned long)status);
+      device->zink_present_context = NULL;
+      return false;
+   }
+   return true;
+}
+
+static bool
+create_zink_present_allocation(
+   Device *device, Resource *resource,
+   const D3D10DDIARG_CREATERESOURCE *create_resource)
+{
+   if (!device->device.base.d3d10_zink ||
+       !(create_resource->BindFlags & D3D10_DDI_BIND_PRESENT))
+      return true;
+
+   const uint32_t format = zink_present_format(create_resource->Format);
+   const UINT width = create_resource->pMipInfoList[0].TexelWidth;
+   const UINT height = create_resource->pMipInfoList[0].TexelHeight;
+   if (create_resource->ResourceDimension != D3D10DDIRESOURCE_TEXTURE2D ||
+       create_resource->MipLevels != 1 || create_resource->ArraySize != 1 ||
+       create_resource->SampleDesc.Count != 1 || format == 0 || width == 0 ||
+       height == 0 || width > UINT32_MAX / 4 ||
+       (uint64_t)width * 4 * height > UINT64_MAX - 4095 ||
+       !ensure_zink_present_context(device))
+      return false;
+
+   VioGpuWddmAllocationInfo private_info = {};
+   private_info.Header.Magic = VIOGPU_WDDM_ABI_MAGIC;
+   private_info.Header.Version = VIOGPU_WDDM_ABI_VERSION;
+   private_info.Header.Size = sizeof(private_info);
+   private_info.Alignment = 4096;
+   private_info.Format = format;
+   private_info.Width = width;
+   private_info.Height = height;
+   private_info.Pitch = width * 4;
+   private_info.Size = (uint64_t)private_info.Pitch * height;
+
+   const bool primary = zink_present_is_primary(create_resource);
+   if (primary) {
+      private_info.Flags = VIOGPU_WDDM_ALLOCATION_PRIMARY;
+      private_info.RefreshRateNumerator =
+         create_resource->pPrimaryDesc->ModeDesc.RefreshRate.Numerator;
+      private_info.RefreshRateDenominator =
+         create_resource->pPrimaryDesc->ModeDesc.RefreshRate.Denominator;
+   } else {
+      private_info.Flags = VIOGPU_WDDM_ALLOCATION_CPU_VISIBLE;
+   }
+
+   D3DDDI_ALLOCATIONINFO allocation_info = {};
+   allocation_info.pPrivateDriverData = &private_info;
+   allocation_info.PrivateDriverDataSize = sizeof(private_info);
+
+   gdikmt_createallocation allocation = {};
+   allocation.NumAllocations = 1;
+   allocation.pAllocationInfo = &allocation_info;
+   allocation.force_allocation_handle = false;
+
+   NTSTATUS status = device->device.base.createAllocation(
+      &device->device.base, &allocation);
+   if (!NT_SUCCESS(status) || allocation_info.hAllocation == 0) {
+      DebugPrintf("Zink Present allocation creation failed: 0x%08lx\n",
+                  (unsigned long)status);
+      return false;
+   }
+
+   resource->zink_present_resource = allocation.hResource;
+   resource->zink_present_allocation = allocation_info.hAllocation;
+   resource->zink_present_width = width;
+   resource->zink_present_height = height;
+   resource->zink_present_pitch = private_info.Pitch;
+   resource->zink_present_primary = primary;
+   return true;
+}
+
+D3DKMT_HANDLE
+GetZinkPresentAllocation(const Resource *resource)
+{
+   return resource ? resource->zink_present_allocation : 0;
+}
+
+HRESULT
+PublishZinkPresentResource(Device *device, Resource *resource,
+                           UINT subresource)
+{
+   if (!device || !device->device.base.d3d10_zink || !resource ||
+       !resource->resource || !resource->zink_present_allocation ||
+       resource->zink_present_primary || subresource != 0 ||
+       resource->resource->target != PIPE_TEXTURE_2D ||
+       resource->resource->width0 != resource->zink_present_width ||
+       resource->resource->height0 != resource->zink_present_height)
+      return E_INVALIDARG;
+
+   pipe_box box = {};
+   box.width = resource->zink_present_width;
+   box.height = resource->zink_present_height;
+   box.depth = 1;
+   pipe_transfer *transfer = NULL;
+   void *source = device->pipe->texture_map(
+      device->pipe, resource->resource, 0, PIPE_MAP_READ, &box, &transfer);
+   if (!source || !transfer)
+      return E_FAIL;
+
+   D3DDDICB_LOCKFLAGS lock_flags = {};
+   void *destination = NULL;
+   NTSTATUS status = device->device.base.lockAllocation(
+      &device->device.base, resource->zink_present_allocation, lock_flags,
+      &destination);
+   HRESULT result = S_OK;
+   if (!NT_SUCCESS(status) || !destination) {
+      result = E_FAIL;
+   } else if (transfer->stride < resource->zink_present_pitch) {
+      result = E_FAIL;
+   } else {
+      for (UINT row = 0; row < resource->zink_present_height; ++row) {
+         memcpy((uint8_t *)destination + (size_t)row * resource->zink_present_pitch,
+                (const uint8_t *)source + (size_t)row * transfer->stride,
+                resource->zink_present_pitch);
+      }
+   }
+
+   if (destination) {
+      status = device->device.base.unlockAllocation(
+         &device->device.base, resource->zink_present_allocation);
+      if (!NT_SUCCESS(status))
+         result = E_FAIL;
+   }
+   device->pipe->texture_unmap(device->pipe, transfer);
+   return result;
+}
+
+static void
+release_zink_present_allocation(Device *device, Resource *resource)
+{
+   if (!device || !resource || !resource->zink_present_allocation)
+      return;
+
+   NTSTATUS status = device->device.base.destroyAllocation(
+      &device->device.base, resource->zink_present_resource,
+      resource->zink_present_allocation);
+   if (!NT_SUCCESS(status))
+      DebugPrintf("Zink Present allocation destruction failed: 0x%08lx\n",
+                  (unsigned long)status);
+
+   resource->zink_present_resource = NULL;
+   resource->zink_present_allocation = 0;
+   resource->zink_present_width = 0;
+   resource->zink_present_height = 0;
+   resource->zink_present_pitch = 0;
+   resource->zink_present_primary = false;
+}
+
 
 /*
  * ----------------------------------------------------------------------
@@ -848,7 +1042,10 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
    struct pipe_context *pipe = CastPipeContext(hDevice);
    struct pipe_screen *screen = pipe->screen;
    const bool yttrium = is_yttrium_screen(screen);
+   const bool zink = device->device.base.d3d10_zink;
    const bool has_primary_desc = pCreateResource->pPrimaryDesc != NULL;
+   const bool zink_primary =
+      zink && zink_present_is_primary(pCreateResource);
 
    if (!validate_resource_dimension(pCreateResource)) {
       SetError(hDevice, DXGI_DDI_ERR_UNSUPPORTED);
@@ -906,12 +1103,17 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
    if (yttrium && has_primary_desc) {
       pCreateResource->pPrimaryDesc->DriverFlags &=
          ~DXGI_DDI_PRIMARY_DRIVER_FLAG_NO_SCANOUT;
+   } else if (zink && has_primary_desc && !zink_primary) {
+      pCreateResource->pPrimaryDesc->DriverFlags |=
+         DXGI_DDI_PRIMARY_DRIVER_FLAG_NO_SCANOUT;
    }
 
    mtx_lock(&device->CreateResourceMtx);
    device->device.allocationVidPn =
-      (yttrium && has_primary_desc) ? pCreateResource->pPrimaryDesc->VidPnSourceId : 0;
-   device->device.isPrimary = pCreateResource->pPrimaryDesc != NULL;
+      ((yttrium && has_primary_desc) || zink_primary) ?
+         pCreateResource->pPrimaryDesc->VidPnSourceId : 0;
+   device->device.isPrimary =
+      has_primary_desc && (!zink || zink_primary);
    device->device.hRTResource = hRTResource.handle;
    device->device.hRTResourceIsD3D9 = false;
 
@@ -998,6 +1200,13 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
    pResource->resource = screen->resource_create(screen, &templat);
    if (!pResource->resource) {
       DebugPrintf("%s: failed to create resource\n", __func__);
+      SetError(hDevice, E_OUTOFMEMORY);
+      goto unlock;
+   }
+   if (!create_zink_present_allocation(device, pResource, pCreateResource)) {
+      DebugPrintf("%s: failed to create paired Zink Present allocation\n",
+                  __func__);
+      pipe_resource_reference(&pResource->resource, NULL);
       SetError(hDevice, E_OUTOFMEMORY);
       goto unlock;
    }
@@ -1284,6 +1493,7 @@ DestroyResource(D3D10DDI_HDEVICE hDevice,       // IN
    }
 
    ReleaseResourceContents(pipe, pResource);
+   release_zink_present_allocation(device, pResource);
    ResourceEvent(RESOURCE_EVENT_DESTROY_END,
                  (uint64_t)(uintptr_t)hResource.pDrvPrivate,
                  NULL, resource, 0, 0, 0, 0);

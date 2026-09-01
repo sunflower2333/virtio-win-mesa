@@ -73,6 +73,12 @@ dxgi_is_yttrium_screen(Device *device)
    return strcmp(dxgi_screen_name(device), "yttrium") == 0;
 }
 
+static bool
+dxgi_is_zink_screen(Device *device)
+{
+   return device && device->device.base.d3d10_zink;
+}
+
 static void
 dxgi_sync_yttrium_primary_identity(Device *device, Resource *resource)
 {
@@ -89,8 +95,13 @@ dxgi_get_d3dkmt_allocation(Device *device, Resource *resource)
 {
    struct winsys_handle whandle;
 
-   if (!device || !device->screen || !device->screen->resource_get_handle ||
-       !resource || !resource->resource)
+   if (!device || !resource)
+      return 0;
+   D3DKMT_HANDLE paired = GetZinkPresentAllocation(resource);
+   if (paired)
+      return paired;
+   if (!device->screen || !device->screen->resource_get_handle ||
+       !resource->resource)
       return 0;
 
    memset(&whandle, 0, sizeof(whandle));
@@ -324,6 +335,7 @@ _Present(DXGI_DDI_ARG_PRESENT *pPresentData)
    struct Device *device = CastDevice(pPresentData->hDevice);
    Resource *pSrcResource = CastResource(pPresentData->hSurfaceToPresent);
    const bool yttrium_screen = dxgi_is_yttrium_screen(device);
+   const bool zink_screen = dxgi_is_zink_screen(device);
    const bool trace = dxgi_trace_enabled(device);
    Resource *pDstResource = CastResource(pPresentData->hDstResource);
    D3DKMT_HANDLE src_alloc = 0;
@@ -384,6 +396,35 @@ _Present(DXGI_DDI_ARG_PRESENT *pPresentData)
                                pPresentData->pDXGIContext,
                                pPresentData->Flags.Value,
                                pPresentData->FlipInterval);
+   }
+
+   if (zink_screen) {
+      /* The current VioGPU KMD implements Blt Present with a distinct primary
+       * destination. Optional scanout resources opt out during creation, so a
+       * NULL destination is an unsupported Flip path and must fail closed. */
+      if (!pDstResource)
+         return E_FAIL;
+
+      src_alloc = dxgi_get_d3dkmt_allocation(device, pSrcResource);
+      dst_alloc = dxgi_get_d3dkmt_allocation(device, pDstResource);
+      if (!src_alloc || !dst_alloc || !device->zink_present_context)
+         return E_FAIL;
+
+      HRESULT publish = PublishZinkPresentResource(
+         device, pSrcResource, pPresentData->SrcSubResourceIndex);
+      if (FAILED(publish))
+         return publish;
+
+      gdikmt_present_info present_info = {};
+      present_info.magic = GDIKMT_PRESENT_INFO_MAGIC;
+      present_info.version = 4;
+      present_info.dxgi_context = pPresentData->pDXGIContext;
+      present_info.hDstAllocation = dst_alloc;
+      present_info.status = S_OK;
+      present_info.force_present_callback = true;
+      NTSTATUS status = device->device.base.present(
+         device->zink_present_context, src_alloc, &present_info, NULL);
+      return (HRESULT)status;
    }
 
    /* dxgi_flush_frontbuffer publishes this Yttrium Present asynchronously. */
@@ -529,30 +570,28 @@ _SetDisplayMode( DXGI_DDI_ARG_SETDISPLAYMODE *SetDisplayMode )
       dxgi_trace_resource(device, "SetDisplayMode", res);
    }
 
-   if(!device->screen->resource_get_handle) {
-      LOG_UNSUPPORTED_ENTRYPOINT();
-      if (trace) {
-         dxgi_trace_printf(device,
-                           "d3d10umd: dxgi SetDisplayMode skipped: resource_get_handle missing\n");
+   D3DKMT_HANDLE kmt_handle = GetZinkPresentAllocation(res);
+   unsigned stride = res ? res->zink_present_pitch : 0;
+   uint64_t size = res ? (uint64_t)res->zink_present_pitch *
+                           res->zink_present_height : 0;
+   if (!kmt_handle) {
+      struct winsys_handle handle;
+      memset(&handle, 0, sizeof(handle));
+      handle.type = WINSYS_HANDLE_TYPE_D3DKMT_ALLOC;
+      if (!device->screen->resource_get_handle ||
+          !device->screen->resource_get_handle(device->screen, NULL,
+                                               res->resource, &handle, 0)) {
+         LOG_UNSUPPORTED_ENTRYPOINT();
+         if (trace) {
+            dxgi_trace_printf(device,
+                              "d3d10umd: dxgi SetDisplayMode skipped: allocation handle missing\n");
+         }
+         return S_OK;
       }
-      return S_OK;
+      kmt_handle = (D3DKMT_HANDLE)(uintptr_t)handle.handle;
+      stride = handle.stride;
+      size = handle.size;
    }
-
-   struct winsys_handle handle;
-   memset(&handle, 0, sizeof(handle));
-   handle.type = WINSYS_HANDLE_TYPE_D3DKMT_ALLOC;
-   if(!device->screen->resource_get_handle(device->screen, NULL, res->resource, &handle, 0)) {
-      LOG_UNSUPPORTED_ENTRYPOINT();
-      if (trace) {
-         dxgi_trace_printf(device,
-                           "d3d10umd: dxgi SetDisplayMode skipped: resource_get_handle failed resource=%p\n",
-                           (void *)SetDisplayMode->hResource);
-      }
-      return S_OK;
-   };
-
-   const auto kmt_handle =
-      static_cast<D3DKMT_HANDLE>(reinterpret_cast<uintptr_t>(handle.handle));
    NTSTATUS status =
       device->device.base.setDisplayMode(&device->device.base, kmt_handle);
    if (trace) {
@@ -560,8 +599,8 @@ _SetDisplayMode( DXGI_DDI_ARG_SETDISPLAYMODE *SetDisplayMode )
                         "d3d10umd: dxgi SetDisplayMode hAllocation=0x%lx status=0x%lx stride=%u size=0x%llx\n",
                         (unsigned long)kmt_handle,
                         status,
-                        handle.stride,
-                        (unsigned long long)handle.size);
+                        stride,
+                        (unsigned long long)size);
    }
 
    return S_OK;

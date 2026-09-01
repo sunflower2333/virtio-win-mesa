@@ -108,6 +108,7 @@ struct Device
    struct pipe_context *pipe;
 
    struct gdikmt_device_d3dddi device;
+   struct gdikmt_context *zink_present_context;
 
    struct cso_context *cso;
    unsigned feature_level;
@@ -229,6 +230,12 @@ struct Resource
    bool buffer;
    bool yttrium_primary;
    struct pipe_resource *resource;
+   HANDLE zink_present_resource;
+   D3DKMT_HANDLE zink_present_allocation;
+   UINT zink_present_width;
+   UINT zink_present_height;
+   UINT zink_present_pitch;
+   bool zink_present_primary;
    void *buffer_shadow;
    unsigned buffer_shadow_size;
    struct pipe_resource *constant_published_buffer;

@@ -176,10 +176,10 @@ d3d10_create_screen(struct gdikmt_device* device)
 
 #ifdef GALLIUM_ZINK
    if (strcmp(driver, "zink") == 0) {
-      /* This first slice is deliberately offscreen-only. Passing no LUID
-       * lets Zink load the installed Vulkan ICD, but it does not establish a
-       * D3D runtime allocation identity for DXGI Present.
-       */
+      /* Passing no LUID lets Zink select the installed Turnip ICD. Present
+       * resources receive a separate D3D-runtime allocation in the frontend;
+       * the Vulkan allocation is never cast to a D3DKMT handle. */
+      device->d3d10_zink = true;
       return zink_win32_create_screen(0);
    }
 #endif

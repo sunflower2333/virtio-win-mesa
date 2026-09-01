@@ -1311,6 +1311,11 @@ DestroyDevice(D3D10DDI_HDEVICE hDevice)   // IN
       yttrium_gdi_flush_labeled(pipe, NULL, 0,
                                 "D3D device destroy flush");
 
+   if (pDevice->zink_present_context) {
+      pDevice->zink_present_context->destroy(pDevice->zink_present_context);
+      pDevice->zink_present_context = NULL;
+   }
+
    for (i = 0; i < PIPE_MAX_SO_BUFFERS; ++i) {
       pipe_so_target_reference(&pDevice->so_targets[i], NULL);
    }

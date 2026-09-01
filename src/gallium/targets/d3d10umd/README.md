@@ -50,11 +50,20 @@ See also <https://docs.microsoft.com/en-us/windows/win32/dlls/dynamic-link-libra
 ## Zink offscreen probe
 
 A Windows build with `-Dgallium-drivers=zink` can select Zink through
-`GALLIUM_DRIVER=zink`. This is an offscreen D3D GPU-development slice: Zink
-loads the installed Vulkan ICD and can exercise Gallium rendering, but it does
-not export `WINSYS_HANDLE_TYPE_D3DKMT_ALLOC`. The target therefore rejects that
-handle request and must not be installed as the display UMD or used for DXGI
-Present until a versioned WDDM allocation bridge is implemented.
+`GALLIUM_DRIVER=zink`. Zink loads the installed Vulkan ICD and can exercise
+Gallium rendering, but it does not export `WINSYS_HANDLE_TYPE_D3DKMT_ALLOC`.
+The target continues to reject that handle request rather than casting a
+Vulkan allocation identity.
+
+For `D3D10_DDI_BIND_PRESENT`, the frontend instead creates a paired allocation
+through the D3D runtime's `pfnAllocateCb`. Optional scanout resources opt out
+and use a CPU-visible source allocation; non-optional front/proxy surfaces use
+a primary allocation. Present synchronously maps the completed Zink resource,
+copies it into the source allocation, and submits a Blt Present callback with a
+distinct primary destination. The current KMD does not support the
+NULL-destination Flip path. This bridge remains compile- and runtime-unproven
+and must not be installed as the display UMD until its ARM64 and Windows gates
+pass.
 
 The `zink_d3d11_offscreen.exe` probe loads `viogpud3d-zink.dll` from its
 application directory, clears a 64x64 RGBA8 render target to red, copies it to

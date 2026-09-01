@@ -53,6 +53,14 @@ yttrium_prepare_present(const struct gdikmt_present_info *present_info)
    return present_info->prepare_present(present_info->prepare_present_data);
 }
 
+static bool
+yttrium_present_throttle_applies(
+   const struct gdikmt_present_info *present_info)
+{
+   return !present_info || present_info->version < 4 ||
+          !present_info->force_present_callback;
+}
+
 static inline struct gdikmt_context_d3dddi *
 gdikmt_context_d3dddi(struct gdikmt_context *iws)
 {
@@ -339,6 +347,10 @@ gdikmt_d3dddi_createcontext(struct gdikmt_device *_device,
 {
    struct gdikmt_device_d3dddi *device = gdikmt_device_d3dddi(_device);
 
+   if (!out_ctx)
+      return STATUS_INVALID_PARAMETER;
+   *out_ctx = NULL;
+
    struct gdikmt_context_d3dddi *ctx = CALLOC_STRUCT(gdikmt_context_d3dddi);
    if (!ctx) {
       return STATUS_NO_MEMORY;
@@ -349,6 +361,8 @@ gdikmt_d3dddi_createcontext(struct gdikmt_device *_device,
    memset(&createContext, 0, sizeof(createContext));
    if (device->use_legacy_signal_sync)
       createContext.EngineAffinity = 1;
+   if (device->create_gdi_context)
+      createContext.Flags.GdiContext = 1;
    NTSTATUS Status = gdikmt_d3dddi_record_status(
       _device,
       device->KTCallbacks.pfnCreateContextCb(device->hRTDevice,
@@ -380,6 +394,8 @@ gdikmt_d3dddi_createcontext(struct gdikmt_device *_device,
       ctx->base.kmt_handle = gdikmt_d3dddi_context_kmt_handle;
 
       *out_ctx = &ctx->base;
+   } else {
+      FREE(ctx);
    }
 
    return Status;
@@ -689,7 +705,8 @@ gdikmt_d3dddi_present(struct gdikmt_context *_ctx, D3DKMT_HANDLE hSrcAllocation,
          return res;
       }
 
-      if (yttrium_present_skip_this_one()) {
+      if (yttrium_present_throttle_applies(present_info) &&
+          yttrium_present_skip_this_one()) {
          yttrium_gdi_trace_debugf("yttrium: d3d9 pfnPresentCb skipped by PRESENT_EVERY\n");
          return S_OK;
       }
@@ -766,7 +783,8 @@ gdikmt_d3dddi_present(struct gdikmt_context *_ctx, D3DKMT_HANDLE hSrcAllocation,
       return res;
    }
 
-   if (yttrium_present_skip_this_one()) {
+   if (yttrium_present_throttle_applies(present_info) &&
+       yttrium_present_skip_this_one()) {
       yttrium_gdi_trace_debugf("yttrium: pfnPresentCb skipped by PRESENT_EVERY\n");
       yttrium_gdi_trace_present_callback(
          YTTRIUM_GDI_TRACE_PFN_PRESENT_AFTER, 0,

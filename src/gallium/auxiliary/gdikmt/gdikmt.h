@@ -25,6 +25,8 @@ struct gdikmt_present_info {
    gdikmt_prepare_present_func prepare_present;
    void *prepare_present_data;
    boolean application_scanout;
+   /* Version 4: bypass the Yttrium-only diagnostic callback throttle. */
+   boolean force_present_callback;
 };
 
 static inline const struct gdikmt_present_info *
@@ -100,6 +102,9 @@ struct gdikmt_context {
 };
 
 struct gdikmt_device {
+   /* Set by the D3D target when the selected Gallium screen is Zink. */
+   boolean d3d10_zink;
+
    /* The D3D runtime owns device-associated allocations once its
     * DestroyDevice callback has begun.  Runtime callback backends must not
     * issue late pfnDeallocateCb calls from that phase. */
