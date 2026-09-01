@@ -1515,6 +1515,7 @@ ResourceMap(D3D10DDI_HDEVICE hDevice,                                // IN
    struct pipe_resource *resource = pResource->resource;
 
    unsigned usage;
+   const bool do_not_wait = !!(Flags & D3D10_DDI_MAP_FLAG_DONOTWAIT);
    bool preserve_constant_buffer_contents = true;
    switch (DDIMap) {
    case D3D10_DDI_MAP_READ:
@@ -1541,6 +1542,14 @@ ResourceMap(D3D10DDI_HDEVICE hDevice,                                // IN
    default:
       assert(0);
       return;
+   }
+
+   if (do_not_wait) {
+      if (threaded_context_is_resource_busy(pipe, resource, usage)) {
+         SetError(hDevice, DXGI_DDI_ERR_WASSTILLDRAWING);
+         return;
+      }
+      usage |= PIPE_MAP_DONTBLOCK;
    }
 
    if (DDIMap == D3D10_DDI_MAP_READ) {
@@ -1583,7 +1592,8 @@ ResourceMap(D3D10DDI_HDEVICE hDevice,                                // IN
    }
    if (!map) {
       DebugPrintf("%s: failed to map resource\n", __func__);
-      SetError(hDevice, E_FAIL);
+      SetError(hDevice,
+               do_not_wait ? DXGI_DDI_ERR_WASSTILLDRAWING : E_FAIL);
       return;
    }
 

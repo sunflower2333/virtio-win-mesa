@@ -2401,6 +2401,9 @@ create_transfer(struct zink_context *ctx, struct pipe_resource *pres, unsigned u
 static void
 destroy_transfer(struct zink_context *ctx, struct zink_transfer *trans)
 {
+   pipe_resource_reference(&trans->staging_res, NULL);
+   pipe_resource_reference(&trans->base.b.resource, NULL);
+
    if (trans->base.b.usage & PIPE_MAP_THREAD_SAFE) {
       free(trans);
    } else {
@@ -2521,11 +2524,16 @@ zink_buffer_map(struct pipe_context *pctx,
    } else if (usage & ZINK_MAP_QBO) {
       usage |= PIPE_MAP_UNSYNCHRONIZED;
    } else if (usage & PIPE_MAP_DONTBLOCK) {
+      uint32_t check_usage = 0;
+      if (usage & PIPE_MAP_READ)
+         check_usage |= ZINK_RESOURCE_ACCESS_WRITE;
+      if (usage & PIPE_MAP_WRITE)
+         check_usage |= ZINK_RESOURCE_ACCESS_RW;
       /* sparse/device-local will always need to wait since it has to copy */
       if (!res->obj->host_visible)
-         goto success;
-      if (!zink_resource_usage_check_completion(screen, res, ZINK_RESOURCE_ACCESS_WRITE))
-         goto success;
+         goto fail;
+      if (!zink_resource_usage_check_completion(screen, res, check_usage))
+         goto fail;
       usage |= PIPE_MAP_UNSYNCHRONIZED;
    } else if ((usage & PIPE_MAP_READ) && !(usage & PIPE_MAP_PERSISTENT) && !host_mem_type_check) {
       /* any read, non-HV write, or unmappable that reaches this point needs staging */
@@ -2624,6 +2632,23 @@ fail:
    return NULL;
 }
 
+static bool
+zink_resource_has_pending_clear(const struct zink_context *ctx,
+                                const struct pipe_resource *pres)
+{
+   if (zink_resource(pres)->aspect == VK_IMAGE_ASPECT_COLOR_BIT) {
+      for (unsigned i = 0; i < ctx->fb_state.nr_cbufs; i++) {
+         if ((ctx->clears_enabled & (PIPE_CLEAR_COLOR0 << i)) &&
+             ctx->fb_state.cbufs[i].texture == pres)
+            return true;
+      }
+      return false;
+   }
+
+   return (ctx->clears_enabled & PIPE_CLEAR_DEPTHSTENCIL) &&
+          ctx->fb_state.zsbuf.texture == pres;
+}
+
 static void *
 zink_image_map(struct pipe_context *pctx,
                   struct pipe_resource *pres,
@@ -2638,6 +2663,21 @@ zink_image_map(struct pipe_context *pctx,
    struct zink_resource *res = zink_resource(pres);
    if (res->unflushed_transient)
       res = res->transient;
+
+   if (usage & PIPE_MAP_DONTBLOCK) {
+      uint32_t check_usage = 0;
+      if (usage & PIPE_MAP_READ)
+         check_usage |= ZINK_RESOURCE_ACCESS_WRITE;
+      if (usage & PIPE_MAP_WRITE)
+         check_usage |= ZINK_RESOURCE_ACCESS_RW;
+      if (zink_is_swapchain(res) || zink_resource_has_pending_clear(ctx, pres) ||
+          ((usage & PIPE_MAP_READ) &&
+           (!res->linear || !res->obj->host_visible)) ||
+          !zink_resource_usage_check_completion(screen, res, check_usage))
+         return NULL;
+      usage |= PIPE_MAP_UNSYNCHRONIZED;
+   }
+
    struct zink_transfer *trans = create_transfer(ctx, pres, usage, box);
    if (!trans)
       return NULL;
@@ -3143,10 +3183,6 @@ transfer_unmap(struct pipe_context *pctx, struct pipe_transfer *ptrans)
          trans->base.b.usage &= ~PIPE_MAP_UNSYNCHRONIZED;
       zink_transfer_flush_region(pctx, ptrans, &box);
    }
-
-   if (trans->staging_res)
-      pipe_resource_reference(&trans->staging_res, NULL);
-   pipe_resource_reference(&trans->base.b.resource, NULL);
 
    destroy_transfer(ctx, trans);
 }

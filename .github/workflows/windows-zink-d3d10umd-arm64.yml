@@ -111,6 +111,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_staging_busy.py
 
+      - name: Verify map DONOTWAIT source contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_zink_map_donotwait.py
+
       - name: Verify Present bridge source contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_present_bridge.py
