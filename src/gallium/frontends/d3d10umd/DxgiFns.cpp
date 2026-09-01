@@ -1066,6 +1066,17 @@ _ResolveSharedResource(DXGI_DDI_ARG_RESOLVESHAREDRESOURCE *Resolve)
    if (!Resolve)
       return E_INVALIDARG;
 
+   Device *device = CastDevice(Resolve->hDevice);
+   Resource *resource = CastResource(Resolve->hResource);
+   if (!device || !device->pipe || !resource || !resource->resource)
+      return E_INVALIDARG;
+
+   if (!device->pipe->flush_resource || !device->pipe->flush)
+      return E_NOTIMPL;
+
+   device->pipe->flush_resource(device->pipe, resource->resource);
+   yttrium_gdi_flush_labeled(device->pipe, NULL, 0,
+                             "D3D10 DXGI ResolveSharedResource");
    return S_OK;
 }
 
