@@ -58,6 +58,15 @@ require(workflow_text, "$files.Count -ne 2", workflow)
 require(workflow_text, "'-Dvulkan-drivers=[]'", workflow)
 require(workflow_text, "'-Dtools=[]'", workflow)
 require(workflow_text, '"src/util/u_atomic.h"', workflow)
+require(workflow_text, "Microsoft.Windows.WDK.ARM64", workflow)
+require(workflow_text, "10.0.26100.6584", workflow)
+require(
+    workflow_text,
+    "e705b2a63eab891def8f98087666f93e8f21da8e3b5def81a624b83fef5bdae9",
+    workflow,
+)
+for header in ("d3d10umddi.h", "d3dumddi.h", "d3dkmddi.h"):
+    require(workflow_text, header, workflow)
 
 for forbidden in ("CreateSwapChain", "CreateDeviceAndSwapChain", "Present("):
     if forbidden in probe_text:

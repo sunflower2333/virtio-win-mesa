@@ -27,10 +27,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up MSVC and WDK
+      - name: Set up ARM64 MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64_arm64
+
+      - name: Install pinned ARM64 WDK headers
+        shell: pwsh
+        run: |
+          $packageId = 'Microsoft.Windows.WDK.ARM64'
+          $packageVersion = '10.0.26100.6584'
+          $kitVersion = '10.0.26100.0'
+          $expectedHash = 'e705b2a63eab891def8f98087666f93e8f21da8e3b5def81a624b83fef5bdae9'
+          $archive = Join-Path $env:RUNNER_TEMP 'microsoft.windows.wdk.arm64.zip'
+          $root = Join-Path $env:RUNNER_TEMP 'microsoft.windows.wdk.arm64'
+          $packageIdLower = $packageId.ToLowerInvariant()
+          $uri = "https://api.nuget.org/v3-flatcontainer/$packageIdLower/$packageVersion/$packageIdLower.$packageVersion.nupkg"
+
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) {
+            throw "ARM64 WDK package hash mismatch: expected $expectedHash, got $actualHash"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $root -Force
+
+          $includeRoot = Join-Path $root "c/Include/$kitVersion"
+          $um = Join-Path $includeRoot 'um'
+          $shared = Join-Path $includeRoot 'shared'
+          $km = Join-Path $includeRoot 'km'
+          $required = @(
+            (Join-Path $um 'd3d10umddi.h')
+            (Join-Path $um 'd3dumddi.h')
+            (Join-Path $shared 'd3dkmddi.h')
+          )
+          foreach ($header in $required) {
+            if (-not (Test-Path -LiteralPath $header -PathType Leaf)) {
+              throw "required WDK header not found: $header"
+            }
+            Write-Host "WDK header -> $header"
+          }
+
+          $wdkInclude = "$um;$shared;$km;$env:INCLUDE"
+          "INCLUDE=$wdkInclude" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Set up Python build tools
         uses: actions/setup-python@v5
