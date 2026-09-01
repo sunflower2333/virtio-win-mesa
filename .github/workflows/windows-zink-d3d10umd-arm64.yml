@@ -135,6 +135,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_shader_resource_view_creation_failure.py
 
+      - name: Verify render and depth view creation failure contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_render_depth_view_creation_failure.py
+
       - name: Verify map DONOTWAIT source contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_map_donotwait.py

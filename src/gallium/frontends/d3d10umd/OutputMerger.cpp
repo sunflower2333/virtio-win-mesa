@@ -413,7 +413,10 @@ CreateRenderTargetView(
                                  desc.first_layer;
       break;
    default:
-      ASSERT(0);
+      LOG_UNSUPPORTED(true);
+      pipe_resource_reference(&desc.texture, NULL);
+      pRTView->resource = NULL;
+      SetError(hDevice, E_INVALIDARG);
       return;
    }
 
@@ -644,7 +647,10 @@ CreateDepthStencilView(
                                  desc.first_layer;
       break;
    default:
-      ASSERT(0);
+      LOG_UNSUPPORTED(true);
+      pipe_resource_reference(&desc.texture, NULL);
+      pDSView->resource = NULL;
+      SetError(hDevice, E_INVALIDARG);
       return;
    }
 
