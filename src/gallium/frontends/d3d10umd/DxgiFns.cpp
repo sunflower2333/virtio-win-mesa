@@ -32,6 +32,7 @@
 
 #include <stdint.h>
 #include <stdarg.h>
+#include <stdlib.h>
 #include <windows.h>
 #include <limits.h>
 #include <stdio.h>
@@ -111,6 +112,44 @@ dxgi_get_d3dkmt_render_allocation(Device *device, Resource *resource)
       return 0;
 
    return (D3DKMT_HANDLE)(uintptr_t)whandle.handle;
+}
+
+static HRESULT
+dxgi_collect_d3dkmt_render_allocations(
+   Device *device,
+   const DXGI_DDI_HRESOURCE *resources,
+   UINT resource_count,
+   D3DKMT_HANDLE **out_allocations)
+{
+   if (!out_allocations || !device || (resource_count && !resources))
+      return E_INVALIDARG;
+
+   *out_allocations = NULL;
+   if (!resource_count)
+      return S_OK;
+
+   D3DKMT_HANDLE *allocations = (D3DKMT_HANDLE *)calloc(
+      resource_count, sizeof(*allocations));
+   if (!allocations)
+      return E_OUTOFMEMORY;
+
+   for (UINT i = 0; i < resource_count; ++i) {
+      Resource *resource = CastResource(resources[i]);
+      if (!resource || !resource->resource) {
+         free(allocations);
+         return E_INVALIDARG;
+      }
+
+      allocations[i] =
+         dxgi_get_d3dkmt_render_allocation(device, resource);
+      if (!allocations[i]) {
+         free(allocations);
+         return E_FAIL;
+      }
+   }
+
+   *out_allocations = allocations;
+   return S_OK;
 }
 
 static D3DKMT_HANDLE
@@ -1144,7 +1183,38 @@ _OfferResources(DXGI_DDI_ARG_OFFERRESOURCES *Offer)
    if (!Offer)
       return E_INVALIDARG;
 
-   return S_OK;
+   Device *device = CastDevice(Offer->hDevice);
+   if (!device || (Offer->Resources && !Offer->pResources))
+      return E_INVALIDARG;
+   if (!Offer->Resources)
+      return S_OK;
+   if (!device->pipe || !device->pipe->flush_resource ||
+       !device->pipe->flush ||
+       !device->device.KTCallbacks.pfnOfferAllocationsCb)
+      return E_NOTIMPL;
+
+   D3DKMT_HANDLE *allocations = NULL;
+   HRESULT result = dxgi_collect_d3dkmt_render_allocations(
+      device, Offer->pResources, Offer->Resources, &allocations);
+   if (FAILED(result))
+      return result;
+
+   for (UINT i = 0; i < Offer->Resources; ++i) {
+      Resource *resource = CastResource(Offer->pResources[i]);
+      device->pipe->flush_resource(device->pipe, resource->resource);
+   }
+   yttrium_gdi_flush_labeled(device->pipe, NULL, 0,
+                             "D3D10 DXGI OfferResources");
+
+   D3DDDICB_OFFERALLOCATIONS offer = {};
+   offer.pResources = NULL;
+   offer.HandleList = allocations;
+   offer.NumAllocations = Offer->Resources;
+   offer.Priority = Offer->Priority;
+   result = device->device.KTCallbacks.pfnOfferAllocationsCb(
+      device->device.hRTDevice, &offer);
+   free(allocations);
+   return result;
 }
 
 HRESULT APIENTRY
@@ -1155,12 +1225,29 @@ _ReclaimResources(DXGI_DDI_ARG_RECLAIMRESOURCES *Reclaim)
    if (!Reclaim)
       return E_INVALIDARG;
 
-   if (Reclaim->pDiscarded) {
-      for (UINT i = 0; i < Reclaim->Resources; ++i)
-         Reclaim->pDiscarded[i] = FALSE;
-   }
+   Device *device = CastDevice(Reclaim->hDevice);
+   if (!device || (Reclaim->Resources && !Reclaim->pResources))
+      return E_INVALIDARG;
+   if (!Reclaim->Resources)
+      return S_OK;
+   if (!device->device.KTCallbacks.pfnReclaimAllocationsCb)
+      return E_NOTIMPL;
 
-   return S_OK;
+   D3DKMT_HANDLE *allocations = NULL;
+   HRESULT result = dxgi_collect_d3dkmt_render_allocations(
+      device, Reclaim->pResources, Reclaim->Resources, &allocations);
+   if (FAILED(result))
+      return result;
+
+   D3DDDICB_RECLAIMALLOCATIONS reclaim = {};
+   reclaim.pResources = NULL;
+   reclaim.HandleList = allocations;
+   reclaim.pDiscarded = Reclaim->pDiscarded;
+   reclaim.NumAllocations = Reclaim->Resources;
+   result = device->device.KTCallbacks.pfnReclaimAllocationsCb(
+      device->device.hRTDevice, &reclaim);
+   free(allocations);
+   return result;
 }
 
 HRESULT APIENTRY

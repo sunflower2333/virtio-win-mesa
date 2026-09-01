@@ -131,6 +131,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_dxgi_resolve_shared_resource.py
 
+      - name: Verify DXGI offer and reclaim source contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_dxgi_offer_reclaim.py
+
       - name: Configure ARM64 Zink D3D UMD
         shell: pwsh
         run: |
