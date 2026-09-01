@@ -38,6 +38,16 @@ workflow = ROOT / ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 dxgi_text = dxgi.read_text(encoding="utf-8")
 workflow_text = workflow.read_text(encoding="utf-8")
 
+require(dxgi_text, "#include <d3d9.h>", dxgi)
+for fragment in (
+    "#define S_NOT_RESIDENT",
+    "#define S_RESIDENT_IN_SHARED_MEMORY",
+    "MAKE_D3DSTATUS(2165)",
+    "MAKE_D3DSTATUS(2166)",
+):
+    if fragment in dxgi_text:
+        raise AssertionError(f"residency status is redefined locally: {fragment}")
+
 render_allocation = function_body(
     dxgi_text,
     "dxgi_get_d3dkmt_render_allocation(Device *device,",

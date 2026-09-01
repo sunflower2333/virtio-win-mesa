@@ -41,6 +41,7 @@
 #include "DxgiFns.h"
 #include "Resource.h"
 
+#include <d3d9.h>
 #include <d3dkmthk.h>
 
 #include "Format.h"
