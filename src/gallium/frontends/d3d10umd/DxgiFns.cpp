@@ -92,16 +92,12 @@ dxgi_sync_yttrium_primary_identity(Device *device, Resource *resource)
 }
 
 static D3DKMT_HANDLE
-dxgi_get_d3dkmt_allocation(Device *device, Resource *resource)
+dxgi_get_d3dkmt_render_allocation(Device *device, Resource *resource)
 {
    struct winsys_handle whandle;
 
-   if (!device || !resource)
-      return 0;
-   D3DKMT_HANDLE paired = GetZinkPresentAllocation(resource);
-   if (paired)
-      return paired;
-   if (!device->screen || !device->screen->resource_get_handle ||
+   if (!device || !resource || !device->screen ||
+       !device->screen->resource_get_handle ||
        !resource->resource)
       return 0;
 
@@ -112,6 +108,19 @@ dxgi_get_d3dkmt_allocation(Device *device, Resource *resource)
       return 0;
 
    return (D3DKMT_HANDLE)(uintptr_t)whandle.handle;
+}
+
+static D3DKMT_HANDLE
+dxgi_get_d3dkmt_allocation(Device *device, Resource *resource)
+{
+   if (!device || !resource)
+      return 0;
+
+   D3DKMT_HANDLE paired = GetZinkPresentAllocation(resource);
+   if (paired)
+      return paired;
+
+   return dxgi_get_d3dkmt_render_allocation(device, resource);
 }
 
 static void
@@ -622,9 +631,27 @@ _SetResourcePriority( DXGI_DDI_ARG_SETRESOURCEPRIORITY *SetResourcePriority )
 {
    LOG_ENTRYPOINT();
 
-   /* ignore */
+   if (!SetResourcePriority)
+      return E_INVALIDARG;
 
-   return S_OK;
+   Device *device = CastDevice(SetResourcePriority->hDevice);
+   Resource *resource = CastResource(SetResourcePriority->hResource);
+   if (!device || !resource ||
+       !device->device.KTCallbacks.pfnSetPriorityCb)
+      return E_INVALIDARG;
+
+   D3DKMT_HANDLE allocation =
+      dxgi_get_d3dkmt_render_allocation(device, resource);
+   if (!allocation)
+      return E_FAIL;
+
+   D3DDDICB_SETPRIORITY priority = {};
+   priority.NumAllocations = 1;
+   priority.HandleList = &allocation;
+   priority.pPriorities = &SetResourcePriority->Priority;
+
+   return device->device.KTCallbacks.pfnSetPriorityCb(
+      device->device.hRTDevice, &priority);
 }
 
 
@@ -641,10 +668,63 @@ _QueryResourceResidency( DXGI_DDI_ARG_QUERYRESOURCERESIDENCY *QueryResourceResid
 {
    LOG_ENTRYPOINT();
 
+   if (!QueryResourceResidency)
+      return E_INVALIDARG;
+
+   Device *device = CastDevice(QueryResourceResidency->hDevice);
+   if (!device || !device->device.KTCallbacks.pfnQueryResidencyCb ||
+       (QueryResourceResidency->Resources &&
+        (!QueryResourceResidency->pResources ||
+         !QueryResourceResidency->pStatus)))
+      return E_INVALIDARG;
+
+   bool any_shared = false;
+   bool any_not_resident = false;
    for (UINT i = 0; i < QueryResourceResidency->Resources; ++i) {
-      QueryResourceResidency->pStatus[i] = DXGI_DDI_RESIDENCY_FULLY_RESIDENT;
+      Resource *resource = CastResource(QueryResourceResidency->pResources[i]);
+      if (!resource)
+         return E_INVALIDARG;
+
+      D3DKMT_HANDLE allocation =
+         dxgi_get_d3dkmt_render_allocation(device, resource);
+      if (!allocation)
+         return E_FAIL;
+
+      D3DDDI_RESIDENCYSTATUS residency = {};
+      D3DDDICB_QUERYRESIDENCY query = {};
+      query.NumAllocations = 1;
+      query.HandleList = &allocation;
+      query.pResidencyStatus = &residency;
+
+      HRESULT result = device->device.KTCallbacks.pfnQueryResidencyCb(
+         device->device.hRTDevice, &query);
+      if (FAILED(result))
+         return result;
+
+      switch (residency) {
+      case D3DDDI_RESIDENCYSTATUS_RESIDENTINGPUMEMORY:
+         QueryResourceResidency->pStatus[i] =
+            DXGI_DDI_RESIDENCY_FULLY_RESIDENT;
+         break;
+      case D3DDDI_RESIDENCYSTATUS_RESIDENTINSHAREDMEMORY:
+         QueryResourceResidency->pStatus[i] =
+            DXGI_DDI_RESIDENCY_RESIDENT_IN_SHARED_MEMORY;
+         any_shared = true;
+         break;
+      case D3DDDI_RESIDENCYSTATUS_NOTRESIDENT:
+         QueryResourceResidency->pStatus[i] =
+            DXGI_DDI_RESIDENCY_EVICTED_TO_DISK;
+         any_not_resident = true;
+         break;
+      default:
+         return E_FAIL;
+      }
    }
 
+   if (any_not_resident)
+      return S_NOT_RESIDENT;
+   if (any_shared)
+      return S_RESIDENT_IN_SHARED_MEMORY;
    return S_OK;
 }
 
