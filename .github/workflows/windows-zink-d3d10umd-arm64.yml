@@ -119,6 +119,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_query_failure_propagation.py
 
+      - name: Verify fixed-function state creation failure contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_fixed_function_state_failures.py
+
       - name: Verify map DONOTWAIT source contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_map_donotwait.py

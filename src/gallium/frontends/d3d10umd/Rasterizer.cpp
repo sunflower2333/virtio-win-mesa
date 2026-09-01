@@ -294,10 +294,22 @@ CreateRasterizerState(
 
    pRasterizerState->state = state;
    pRasterizerState->forced_sample_count = 0;
+   pRasterizerState->handle = NULL;
+   pRasterizerState->discard_handle = NULL;
    pRasterizerState->handle = pipe->create_rasterizer_state(pipe, &state);
+   if (!pRasterizerState->handle) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+   }
+
    state.rasterizer_discard = 1;
    pRasterizerState->discard_handle =
       pipe->create_rasterizer_state(pipe, &state);
+   if (!pRasterizerState->discard_handle) {
+      pipe->delete_rasterizer_state(pipe, pRasterizerState->handle);
+      pRasterizerState->handle = NULL;
+      SetError(hDevice, E_OUTOFMEMORY);
+   }
 }
 
 

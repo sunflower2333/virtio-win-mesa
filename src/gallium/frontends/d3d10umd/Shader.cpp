@@ -1824,6 +1824,8 @@ CreateSampler(D3D10DDI_HDEVICE hDevice,                        // IN
    state.border_color.f[3] = pSamplerDesc->BorderColor[3];
 
    pSamplerState->handle = pipe->create_sampler_state(pipe, &state);
+   if (!pSamplerState->handle)
+      SetError(hDevice, E_OUTOFMEMORY);
 }
 
 

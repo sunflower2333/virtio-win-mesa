@@ -1034,6 +1034,8 @@ CreateBlendState(D3D10DDI_HDEVICE hDevice,                     // IN
    state.alpha_to_coverage = pBlendDesc->AlphaToCoverageEnable;
 
    pBlendState->handle = pipe->create_blend_state(pipe, &state);
+   if (!pBlendState->handle)
+      SetError(hDevice, E_OUTOFMEMORY);
 }
 
 
@@ -1093,6 +1095,8 @@ CreateBlendState1(D3D10DDI_HDEVICE hDevice,                     // IN
    }
 
    pBlendState->handle = pipe->create_blend_state(pipe, &state);
+   if (!pBlendState->handle)
+      SetError(hDevice, E_OUTOFMEMORY);
 }
 
 void APIENTRY
@@ -1151,6 +1155,8 @@ CreateBlendState11_1Impl(D3D10DDI_HDEVICE hDevice,
    }
 
    pBlendState->handle = pipe->create_blend_state(pipe, &state);
+   if (!pBlendState->handle)
+      SetError(hDevice, E_OUTOFMEMORY);
 }
 
 
@@ -1572,6 +1578,8 @@ CreateDepthStencilState(
 
    pDepthStencilState->handle =
       pipe->create_depth_stencil_alpha_state(pipe, &state);
+   if (!pDepthStencilState->handle)
+      SetError(hDevice, E_OUTOFMEMORY);
 }
 
 
