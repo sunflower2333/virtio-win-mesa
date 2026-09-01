@@ -1384,6 +1384,10 @@ OpenResource(D3D10DDI_HDEVICE hDevice,                            // IN
    LOG_ENTRYPOINT();
    
    Device *pDevice = CastDevice(hDevice);
+   Resource *pResource = CastResource(hResource);
+
+   memset(pResource, 0, sizeof *pResource);
+
    if (!pDevice->screen->resource_from_handle) {
       SetError(hDevice, E_OUTOFMEMORY);
       return;
@@ -1394,9 +1398,6 @@ OpenResource(D3D10DDI_HDEVICE hDevice,                            // IN
    pDevice->device.hRTResourceIsD3D9 = false;
    pDevice->device.pOpenResource = pOpenResource;
    
-   Resource *pResource = CastResource(hResource);
-   memset(pResource, 0, sizeof *pResource);
-   
    struct winsys_handle whandle;
    memset(&whandle, 0, sizeof(whandle));
    whandle.type = WINSYS_HANDLE_TYPE_WIN32_HANDLE;
@@ -1406,8 +1407,7 @@ OpenResource(D3D10DDI_HDEVICE hDevice,                            // IN
       pDevice->screen->resource_from_handle(pDevice->screen, NULL, &whandle, 0);
    
    if (!pResource->resource) {
-      SetError(hDevice, E_OUTOFMEMORY);
-      goto unlock;
+      goto open_failure;
    }
    
    pResource->buffer = false;
@@ -1417,6 +1417,10 @@ OpenResource(D3D10DDI_HDEVICE hDevice,                            // IN
       pResource->MipLevels * pResource->resource->array_size;
    pResource->transfers = (struct pipe_transfer **)calloc(
       pResource->NumSubResources, sizeof *pResource->transfers);
+   if (!pResource->transfers) {
+      DebugPrintf("%s: failed to allocate opened-resource transfers\n", __func__);
+      goto open_failure;
+   }
    ResourceEvent(RESOURCE_EVENT_OPEN,
                  (uint64_t)(uintptr_t)hResource.pDrvPrivate,
                  (const void *)(uintptr_t)hRTResource.handle,
@@ -1426,6 +1430,11 @@ OpenResource(D3D10DDI_HDEVICE hDevice,                            // IN
                  pResource->resource->flags,
                  (uint64_t)pOpenResource->hKMResource.handle);
    RegisterResource(pDevice, pResource, "open", hResource, hRTResource);
+   goto unlock;
+
+open_failure:
+   ReleaseResourceContents(pDevice->pipe, pResource);
+   SetError(hDevice, E_OUTOFMEMORY);
 
 unlock:
    pDevice->device.pOpenResource = NULL;

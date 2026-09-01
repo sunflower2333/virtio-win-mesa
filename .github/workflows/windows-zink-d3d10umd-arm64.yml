@@ -131,6 +131,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_resource_creation_failures.py
 
+      - name: Verify resource open failure contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_resource_open_failures.py
+
       - name: Verify shader creation failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_shader_creation_failures.py
