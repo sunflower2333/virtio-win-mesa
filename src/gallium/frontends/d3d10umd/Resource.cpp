@@ -1122,17 +1122,6 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
    memset(pResource, 0, sizeof *pResource);
    pResource->yttrium_primary = yttrium && has_primary_desc;
 
-#if 0
-   if (pCreateResource->pPrimaryDesc) {
-      pCreateResource->pPrimaryDesc->DriverFlags = DXGI_DDI_PRIMARY_DRIVER_FLAG_NO_SCANOUT;
-      if (!(pCreateResource->pPrimaryDesc->DriverFlags & DXGI_DDI_PRIMARY_OPTIONAL)) {
-         // http://msdn.microsoft.com/en-us/library/windows/hardware/ff568846.aspx
-         SetError(hDevice, DXGI_DDI_ERR_UNSUPPORTED);
-         return;
-      }
-   }
-#endif
-
    pResource->Format = pCreateResource->Format;
    pResource->MiscFlags = pCreateResource->MiscFlags;
    pResource->ByteStride = 0;

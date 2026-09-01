@@ -103,6 +103,10 @@ for fragment in (
     "has_primary_desc && (!zink || zink_primary)",
 ):
     require(resource_text, fragment, resource)
+if "pPrimaryDesc->DriverFlags & DXGI_DDI_PRIMARY_OPTIONAL" in resource_text:
+    raise AssertionError(
+        "DXGI_DDI_PRIMARY_OPTIONAL is an input Flags bit, not a DriverFlags bit"
+    )
 require(resource_text, "resource->zink_present_primary || subresource != 0", resource)
 require(dxgi_text, '#include "Resource.h"', dxgi)
 for fragment in (
@@ -166,7 +170,8 @@ require_order(
 require_order(
     dxgi_text,
     (
-        "if (!pDstResource)",
+        "!pDstResource->zink_present_primary",
+        "pPresentData->DstSubResourceIndex != 0",
         "PublishZinkPresentResource(",
         "device->device.base.present(",
     ),

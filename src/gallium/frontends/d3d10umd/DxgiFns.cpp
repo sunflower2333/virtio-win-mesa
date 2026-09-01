@@ -403,7 +403,8 @@ _Present(DXGI_DDI_ARG_PRESENT *pPresentData)
       /* The current VioGPU KMD implements Blt Present with a distinct primary
        * destination. Optional scanout resources opt out during creation, so a
        * NULL destination is an unsupported Flip path and must fail closed. */
-      if (!pDstResource)
+      if (!pDstResource || !pDstResource->zink_present_primary ||
+          pPresentData->DstSubResourceIndex != 0)
          return E_FAIL;
 
       src_alloc = dxgi_get_d3dkmt_allocation(device, pSrcResource);
