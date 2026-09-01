@@ -143,6 +143,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_tessellation_shader_creation_failures.py
 
+      - name: Verify tessellation stage binding contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_tessellation_stage_bindings.py
+
       - name: Verify UAV creation failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_uav_creation_failure.py

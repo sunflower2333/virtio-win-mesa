@@ -3303,6 +3303,9 @@ HsSetShaderResources(
    __in_ecount (NumViews) const D3D10DDI_HSHADERRESOURCEVIEW *phShaderResourceViews)
 {
    LOG_ENTRYPOINT();
+
+   SetShaderResources(MESA_SHADER_TESS_CTRL, hDevice, Offset, NumViews,
+                      phShaderResourceViews);
 }
 
 void APIENTRY
@@ -3311,6 +3314,9 @@ DsSetShaderResources(
    __in_ecount (NumViews) const D3D10DDI_HSHADERRESOURCEVIEW *phShaderResourceViews)
 {
    LOG_ENTRYPOINT();
+
+   SetShaderResources(MESA_SHADER_TESS_EVAL, hDevice, Offset, NumViews,
+                      phShaderResourceViews);
 }
 
 void APIENTRY
@@ -3336,6 +3342,9 @@ HsSetSamplers(D3D10DDI_HDEVICE hDevice, UINT Offset, UINT NumSamplers,
               __in_ecount (NumSamplers) const D3D10DDI_HSAMPLER *phSamplers)
 {
    LOG_ENTRYPOINT();
+
+   SetSamplers(MESA_SHADER_TESS_CTRL, hDevice, Offset, NumSamplers,
+               phSamplers);
 }
 
 void APIENTRY
@@ -3343,6 +3352,9 @@ DsSetSamplers(D3D10DDI_HDEVICE hDevice, UINT Offset, UINT NumSamplers,
               __in_ecount (NumSamplers) const D3D10DDI_HSAMPLER *phSamplers)
 {
    LOG_ENTRYPOINT();
+
+   SetSamplers(MESA_SHADER_TESS_EVAL, hDevice, Offset, NumSamplers,
+               phSamplers);
 }
 
 void APIENTRY
