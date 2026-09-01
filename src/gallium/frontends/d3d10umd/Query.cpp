@@ -158,10 +158,18 @@ CreateQuery(D3D10DDI_HDEVICE hDevice,                          // IN
    pQuery->Emulated = ShouldEmulateQuery(pCreateQuery->Query);
 
    pQuery->pipe_type = TranslateQueryType(pCreateQuery->Query);
-   if (!pQuery->Emulated && pQuery->pipe_type < PIPE_QUERY_TYPES) {
-      pQuery->handle = pipe->create_query(pipe, pQuery->pipe_type,
-                                          TranslateQueryIndex(pCreateQuery->Query));
+   if (pQuery->Emulated)
+      return;
+
+   if (pQuery->pipe_type >= PIPE_QUERY_TYPES) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
    }
+
+   pQuery->handle = pipe->create_query(pipe, pQuery->pipe_type,
+                                       TranslateQueryIndex(pCreateQuery->Query));
+   if (!pQuery->handle)
+      SetError(hDevice, E_OUTOFMEMORY);
 }
 
 
@@ -334,7 +342,8 @@ QueryGetData(D3D10DDI_HDEVICE hDevice,                      // IN
       ret = pipe->get_query_result(pipe, state, false, &result);
    } else {
       LOG_UNSUPPORTED(true);
-      ret = true;
+      SetError(hDevice, E_FAIL);
+      return;
    }
 
    if (!ret) {

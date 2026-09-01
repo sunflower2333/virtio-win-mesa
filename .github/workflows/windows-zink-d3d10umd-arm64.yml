@@ -115,6 +115,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_flush_device_removed.py
 
+      - name: Verify query failure propagation source contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_query_failure_propagation.py
+
       - name: Verify map DONOTWAIT source contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_zink_map_donotwait.py
