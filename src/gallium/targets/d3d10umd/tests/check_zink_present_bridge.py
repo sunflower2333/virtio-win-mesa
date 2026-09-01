@@ -28,6 +28,7 @@ abi = ROOT / "src/gallium/frontends/d3d10umd/VioGpuWddmPresentAbi.h"
 gdikmt_header = ROOT / "src/gallium/auxiliary/gdikmt/gdikmt.h"
 gdikmt_runtime = ROOT / "src/gallium/frontends/d3d10umd/gdikmt_d3dddi.cpp"
 resource = ROOT / "src/gallium/frontends/d3d10umd/Resource.cpp"
+resource_header = ROOT / "src/gallium/frontends/d3d10umd/Resource.h"
 device = ROOT / "src/gallium/frontends/d3d10umd/Device.cpp"
 dxgi = ROOT / "src/gallium/frontends/d3d10umd/DxgiFns.cpp"
 target = ROOT / "src/gallium/targets/d3d10umd/d3d10_gdi.c"
@@ -38,6 +39,7 @@ abi_text = abi.read_text(encoding="utf-8")
 gdikmt_header_text = gdikmt_header.read_text(encoding="utf-8")
 gdikmt_runtime_text = gdikmt_runtime.read_text(encoding="utf-8")
 resource_text = resource.read_text(encoding="utf-8")
+resource_header_text = resource_header.read_text(encoding="utf-8")
 device_text = device.read_text(encoding="utf-8")
 dxgi_text = dxgi.read_text(encoding="utf-8")
 target_text = target.read_text(encoding="utf-8")
@@ -102,6 +104,12 @@ for fragment in (
 ):
     require(resource_text, fragment, resource)
 require(resource_text, "resource->zink_present_primary || subresource != 0", resource)
+require(dxgi_text, '#include "Resource.h"', dxgi)
+for fragment in (
+    "D3DKMT_HANDLE GetZinkPresentAllocation(const Resource *resource);",
+    "HRESULT PublishZinkPresentResource(Device *device, Resource *resource,",
+):
+    require(resource_header_text, fragment, resource_header)
 
 # Context creation is lazy, uses engine affinity one with zero UMD flags and an
 # empty private payload, and is released before the Gallium device is destroyed.

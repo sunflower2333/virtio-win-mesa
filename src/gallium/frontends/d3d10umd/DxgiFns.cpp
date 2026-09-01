@@ -39,6 +39,7 @@
 #include <winnt.h>
 
 #include "DxgiFns.h"
+#include "Resource.h"
 
 #include <d3dkmthk.h>
 
