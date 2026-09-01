@@ -24,6 +24,27 @@ def require_order(text: str, fragments: tuple[str, ...], source: Path) -> None:
         raise AssertionError(f"incorrect ordering in {source}: {fragments!r}")
 
 
+def function_body(text: str, signature: str, source: Path) -> str:
+    start = text.find(signature)
+    if start < 0:
+        raise AssertionError(f"missing function {signature!r} in {source}")
+    opening = text.find("{", start)
+    if opening < 0:
+        raise AssertionError(f"missing function body for {signature!r} in {source}")
+
+    depth = 0
+    for position in range(opening, len(text)):
+        character = text[position]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return text[opening : position + 1]
+
+    raise AssertionError(f"unterminated function {signature!r} in {source}")
+
+
 abi = ROOT / "src/gallium/frontends/d3d10umd/VioGpuWddmPresentAbi.h"
 gdikmt_header = ROOT / "src/gallium/auxiliary/gdikmt/gdikmt.h"
 gdikmt_runtime = ROOT / "src/gallium/frontends/d3d10umd/gdikmt_d3dddi.cpp"
@@ -201,6 +222,40 @@ for fragment in (
         dxgi if fragment.startswith("present_info") else gdikmt_runtime
     )
     require(source_text, fragment, source)
+
+# WDDM 1.3 Present1 can batch multiple source resources. The runtime contract
+# requires the final source to be translated for the Present callback.
+present1 = function_body(
+    dxgi_text,
+    "_Present1(DXGI_DDI_ARG_PRESENT1 *Present)",
+    dxgi,
+)
+for fragment in (
+    "!Present->phSurfacesToPresent",
+    "!Present->SurfacesToPresent",
+    "const UINT surface_index = Present->SurfacesToPresent - 1;",
+    "Present->phSurfacesToPresent[surface_index].hSurface",
+    "Present->phSurfacesToPresent[surface_index].SubResourceIndex",
+    "legacy.hDstResource = Present->hDstResource;",
+    "legacy.DstSubResourceIndex = Present->DstSubResourceIndex;",
+    "legacy.pDXGIContext = Present->pDXGIContext;",
+    "legacy.Flags = Present->Flags;",
+    "legacy.FlipInterval = Present->FlipInterval;",
+    "return _Present(&legacy);",
+):
+    require(present1, fragment, dxgi)
+if "phSurfacesToPresent[0]" in present1:
+    raise AssertionError("Present1 incorrectly translates the first batched source")
+require_order(
+    present1,
+    (
+        "!Present->SurfacesToPresent",
+        "Present->SurfacesToPresent - 1",
+        "Present->phSurfacesToPresent[surface_index].hSurface",
+        "return _Present(&legacy);",
+    ),
+    dxgi,
+)
 
 require(workflow_text, "check_zink_present_bridge.py", workflow)
 

@@ -1292,11 +1292,13 @@ _Present1(DXGI_DDI_ARG_PRESENT1 *Present)
       return E_INVALIDARG;
    }
 
+   const UINT surface_index = Present->SurfacesToPresent - 1;
    DXGI_DDI_ARG_PRESENT legacy = {};
    legacy.hDevice = Present->hDevice;
-   legacy.hSurfaceToPresent = Present->phSurfacesToPresent[0].hSurface;
+   legacy.hSurfaceToPresent =
+      Present->phSurfacesToPresent[surface_index].hSurface;
    legacy.SrcSubResourceIndex =
-      Present->phSurfacesToPresent[0].SubResourceIndex;
+      Present->phSurfacesToPresent[surface_index].SubResourceIndex;
    legacy.hDstResource = Present->hDstResource;
    legacy.DstSubResourceIndex = Present->DstSubResourceIndex;
    legacy.pDXGIContext = Present->pDXGIContext;
