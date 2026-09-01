@@ -92,7 +92,7 @@ jobs:
           meson setup $buildDir . --cross-file $crossFile `
             --backend=ninja --buildtype=release `
             -Dplatforms=windows `
-            -Dvulkan-drivers=[] `
+            '-Dvulkan-drivers=[]' `
             -Dgallium-drivers=zink `
             -Dgallium-d3d10umd=true `
             -Dgallium-yttrium=false `
@@ -102,7 +102,7 @@ jobs:
             -Dllvm=disabled -Dshader-cache=disabled `
             -Dzlib=disabled -Dzstd=disabled `
             -Db_vscrt=static_from_buildtype `
-            -Dtools=[] -Dbuild-tests=false -Dwerror=false
+            '-Dtools=[]' -Dbuild-tests=false -Dwerror=false
 
       - name: Compile and audit ARM64 DLL and probe
         shell: pwsh

@@ -48,6 +48,8 @@ require(probe_text, "kExpectedChecksum = 2088960", probe)
 require(workflow_text, "viogpud3d-zink zink_d3d11_offscreen", workflow)
 require(workflow_text, "artifact/zink_d3d11_offscreen.exe", workflow)
 require(workflow_text, "$files.Count -ne 2", workflow)
+require(workflow_text, "'-Dvulkan-drivers=[]'", workflow)
+require(workflow_text, "'-Dtools=[]'", workflow)
 
 for forbidden in ("CreateSwapChain", "CreateDeviceAndSwapChain", "Present("):
     if forbidden in probe_text:
