@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <windows.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <winerror.h>
@@ -56,6 +57,7 @@
 #include "util/format/u_format.h"
 #include "util/u_debug.h"
 #include "util/u_inlines.h"
+#include "util/u_math.h"
 #include "gallium/winsys/yttrium/gdi/yttrium_gdi_public.h"
 
 static const char *
@@ -862,10 +864,157 @@ _RotateResourceIdentities(DXGI_DDI_ARG_ROTATE_RESOURCE_IDENTITIES *RotateResourc
  * ----------------------------------------------------------------------
  */
 
+struct dxgi_blt_rect
+{
+   UINT left;
+   UINT top;
+   UINT right;
+   UINT bottom;
+};
+
+static bool
+dxgi_blt_subresource(struct pipe_resource *resource, UINT subresource,
+                     unsigned *level, unsigned *layer,
+                     unsigned *width, unsigned *height)
+{
+   if (!resource || !level || !layer || !width || !height ||
+       (resource->target != PIPE_TEXTURE_2D &&
+        resource->target != PIPE_TEXTURE_2D_ARRAY))
+      return false;
+
+   const unsigned levels = resource->last_level + 1;
+   *level = subresource % levels;
+   *layer = subresource / levels;
+   if (*layer >= resource->array_size)
+      return false;
+
+   *width = u_minify(resource->width0, *level);
+   *height = u_minify(resource->height0, *level);
+   return true;
+}
+
+static bool
+dxgi_blt_rect_valid(const struct dxgi_blt_rect *rect,
+                    unsigned width, unsigned height)
+{
+   return rect && rect->left < rect->right && rect->top < rect->bottom &&
+          rect->right <= width && rect->bottom <= height &&
+          rect->right <= INT_MAX && rect->bottom <= INT_MAX;
+}
+
+static HRESULT
+dxgi_blt(Device *device, Resource *dst, UINT dst_subresource,
+         const struct dxgi_blt_rect *dst_rect, Resource *src,
+         UINT src_subresource, const struct dxgi_blt_rect *requested_src_rect,
+         DXGI_DDI_ARG_BLT_FLAGS flags, DXGI_DDI_MODE_ROTATION rotate)
+{
+   if (!device || !device->pipe || !dst || !src || !dst->resource ||
+       !src->resource || flags.Reserved)
+      return E_INVALIDARG;
+
+   struct pipe_resource *dst_resource = dst->resource;
+   struct pipe_resource *src_resource = src->resource;
+   if (!device->pipe->blit ||
+       (dst_resource->target != PIPE_TEXTURE_2D &&
+        dst_resource->target != PIPE_TEXTURE_2D_ARRAY) ||
+       (src_resource->target != PIPE_TEXTURE_2D &&
+        src_resource->target != PIPE_TEXTURE_2D_ARRAY))
+      return DXGI_DDI_ERR_UNSUPPORTED;
+
+   unsigned dst_level, dst_layer, dst_width, dst_height;
+   unsigned src_level, src_layer, src_width, src_height;
+   if (!dxgi_blt_subresource(dst_resource, dst_subresource,
+                             &dst_level, &dst_layer,
+                             &dst_width, &dst_height) ||
+       !dxgi_blt_subresource(src_resource, src_subresource,
+                             &src_level, &src_layer,
+                             &src_width, &src_height))
+      return E_INVALIDARG;
+
+   struct dxgi_blt_rect full_src_rect = {};
+   if (!requested_src_rect) {
+      full_src_rect.right = src_width;
+      full_src_rect.bottom = src_height;
+      requested_src_rect = &full_src_rect;
+   }
+   if (!dxgi_blt_rect_valid(dst_rect, dst_width, dst_height) ||
+       !dxgi_blt_rect_valid(requested_src_rect, src_width, src_height))
+      return E_INVALIDARG;
+
+   const UINT copy_width = requested_src_rect->right - requested_src_rect->left;
+   const UINT copy_height = requested_src_rect->bottom - requested_src_rect->top;
+   const UINT dst_copy_width = dst_rect->right - dst_rect->left;
+   const UINT dst_copy_height = dst_rect->bottom - dst_rect->top;
+   if ((!flags.Stretch &&
+        (copy_width != dst_copy_width || copy_height != dst_copy_height)) ||
+       (!flags.Convert && src_resource->format != dst_resource->format))
+      return E_INVALIDARG;
+
+   if ((flags.Resolve &&
+        (src_resource->nr_samples <= 1 || dst_resource->nr_samples > 1)) ||
+       (!flags.Resolve &&
+        src_resource->nr_samples != dst_resource->nr_samples))
+      return DXGI_DDI_ERR_UNSUPPORTED;
+
+   struct pipe_blit_info info = {};
+   info.dst.resource = dst_resource;
+   info.dst.level = dst_level;
+   info.dst.format = dst_resource->format;
+   info.dst.box.x = (int)dst_rect->left;
+   info.dst.box.y = (int)dst_rect->top;
+   info.dst.box.z = dst_layer;
+   info.dst.box.width = (int)dst_copy_width;
+   info.dst.box.height = (int)dst_copy_height;
+   info.dst.box.depth = 1;
+   info.src.resource = src_resource;
+   info.src.level = src_level;
+   info.src.format = src_resource->format;
+   info.src.box.x = (int)requested_src_rect->left;
+   info.src.box.y = (int)requested_src_rect->top;
+   info.src.box.z = src_layer;
+   info.src.box.width = (int)copy_width;
+   info.src.box.height = (int)copy_height;
+   info.src.box.depth = 1;
+
+   switch (rotate) {
+   case DXGI_DDI_MODE_ROTATION_UNSPECIFIED:
+   case DXGI_DDI_MODE_ROTATION_IDENTITY:
+      break;
+   case DXGI_DDI_MODE_ROTATION_ROTATE180:
+      info.src.box.x = (int)requested_src_rect->right;
+      info.src.box.y = (int)requested_src_rect->bottom;
+      info.src.box.width = -(int)copy_width;
+      info.src.box.height = -(int)copy_height;
+      break;
+   case DXGI_DDI_MODE_ROTATION_ROTATE90:
+   case DXGI_DDI_MODE_ROTATION_ROTATE270:
+      return DXGI_DDI_ERR_UNSUPPORTED;
+   default:
+      return E_INVALIDARG;
+   }
+
+   info.mask = util_format_get_mask(dst_resource->format) &
+               util_format_get_mask(src_resource->format) & PIPE_MASK_RGBA;
+   if (!info.mask)
+      return DXGI_DDI_ERR_UNSUPPORTED;
+   info.filter = flags.Stretch ? PIPE_TEX_FILTER_LINEAR :
+                                 PIPE_TEX_FILTER_NEAREST;
+
+   dxgi_sync_yttrium_primary_identity(device, dst);
+   device->pipe->blit(device->pipe, &info);
+   if (flags.Present)
+      dxgi_flush_frontbuffer(device, dst_resource, dst_level, dst_layer, NULL);
+
+   return S_OK;
+}
+
 HRESULT APIENTRY
 _Blt(DXGI_DDI_ARG_BLT *Blt)
 {
    LOG_ENTRYPOINT();
+
+   if (!Blt)
+      return E_INVALIDARG;
 
    Device *device = CastDevice(Blt->hDevice);
    Resource *dst = CastResource(Blt->hDstResource);
@@ -893,51 +1042,19 @@ _Blt(DXGI_DDI_ARG_BLT *Blt)
       dxgi_trace_resource(device, "Blt src", src);
    }
 
-   if (!device || !device->pipe || !dst || !src || !dst->resource ||
-       !src->resource) {
-      return E_INVALIDARG;
-   }
+   const struct dxgi_blt_rect dst_rect = {
+      Blt->DstLeft, Blt->DstTop, Blt->DstRight, Blt->DstBottom
+   };
+   HRESULT result = dxgi_blt(device, dst, Blt->DstSubresource, &dst_rect,
+                             src, Blt->SrcSubresource, NULL,
+                             Blt->Flags, Blt->Rotate);
 
-   struct pipe_context *pipe = device->pipe;
-   struct pipe_resource *dst_resource = dst->resource;
-   struct pipe_resource *src_resource = src->resource;
-   dxgi_sync_yttrium_primary_identity(device, dst);
-
-   unsigned dst_level = Blt->DstSubresource % (dst_resource->last_level + 1);
-   unsigned dst_layer = Blt->DstSubresource / (dst_resource->last_level + 1);
-   unsigned src_level = Blt->SrcSubresource % (src_resource->last_level + 1);
-   unsigned src_layer = Blt->SrcSubresource / (src_resource->last_level + 1);
-
-   struct pipe_box src_box = {};
-   src_box.x = 0;
-   src_box.y = 0;
-   src_box.z = src_layer;
-   src_box.width = Blt->DstRight > Blt->DstLeft ?
-      Blt->DstRight - Blt->DstLeft : src_resource->width0;
-   src_box.height = Blt->DstBottom > Blt->DstTop ?
-      Blt->DstBottom - Blt->DstTop : src_resource->height0;
-   src_box.depth = 1;
-
-   pipe->resource_copy_region(pipe,
-                              dst_resource,
-                              dst_level,
-                              Blt->DstLeft,
-                              Blt->DstTop,
-                              dst_layer,
-                              src_resource,
-                              src_level,
-                              &src_box);
-
-   if (Blt->Flags.Present) {
-      dxgi_flush_frontbuffer(device, dst_resource, dst_level, dst_layer, NULL);
-   }
-
-   if (trace) {
+   if (trace && SUCCEEDED(result)) {
       dxgi_trace_printf(device, "d3d10umd: dxgi Blt complete present=%u\n",
                         Blt->Flags.Present);
    }
 
-   return S_OK;
+   return result;
 }
 
 #if SUPPORT_D3D11_1
@@ -990,58 +1107,22 @@ _Blt1(DXGI_DDI_ARG_BLT1 *Blt)
       dxgi_trace_resource(device, "Blt1 src", src);
    }
 
-   if (!device || !device->pipe || !dst || !src || !dst->resource ||
-       !src->resource) {
-      return E_INVALIDARG;
-   }
+   const struct dxgi_blt_rect dst_rect = {
+      Blt->DstLeft, Blt->DstTop, Blt->DstRight, Blt->DstBottom
+   };
+   const struct dxgi_blt_rect src_rect = {
+      Blt->SrcLeft, Blt->SrcTop, Blt->SrcRight, Blt->SrcBottom
+   };
+   HRESULT result = dxgi_blt(device, dst, Blt->DstSubresource, &dst_rect,
+                             src, Blt->SrcSubresource, &src_rect,
+                             Blt->Flags, Blt->Rotate);
 
-   struct pipe_context *pipe = device->pipe;
-   struct pipe_resource *dst_resource = dst->resource;
-   struct pipe_resource *src_resource = src->resource;
-   dxgi_sync_yttrium_primary_identity(device, dst);
-
-   unsigned dst_level = Blt->DstSubresource % (dst_resource->last_level + 1);
-   unsigned dst_layer = Blt->DstSubresource / (dst_resource->last_level + 1);
-   unsigned src_level = Blt->SrcSubresource % (src_resource->last_level + 1);
-   unsigned src_layer = Blt->SrcSubresource / (src_resource->last_level + 1);
-
-   unsigned width = Blt->SrcRight > Blt->SrcLeft ?
-      Blt->SrcRight - Blt->SrcLeft :
-      (Blt->DstRight > Blt->DstLeft ? Blt->DstRight - Blt->DstLeft :
-       src_resource->width0);
-   unsigned height = Blt->SrcBottom > Blt->SrcTop ?
-      Blt->SrcBottom - Blt->SrcTop :
-      (Blt->DstBottom > Blt->DstTop ? Blt->DstBottom - Blt->DstTop :
-       src_resource->height0);
-
-   struct pipe_box src_box = {};
-   src_box.x = Blt->SrcLeft;
-   src_box.y = Blt->SrcTop;
-   src_box.z = src_layer;
-   src_box.width = width;
-   src_box.height = height;
-   src_box.depth = 1;
-
-   pipe->resource_copy_region(pipe,
-                              dst_resource,
-                              dst_level,
-                              Blt->DstLeft,
-                              Blt->DstTop,
-                              dst_layer,
-                              src_resource,
-                              src_level,
-                              &src_box);
-
-   if (Blt->Flags.Present) {
-      dxgi_flush_frontbuffer(device, dst_resource, dst_level, dst_layer, NULL);
-   }
-
-   if (trace) {
+   if (trace && SUCCEEDED(result)) {
       dxgi_trace_printf(device, "d3d10umd: dxgi Blt1 complete present=%u\n",
                         Blt->Flags.Present);
    }
 
-   return S_OK;
+   return result;
 }
 
 HRESULT APIENTRY
