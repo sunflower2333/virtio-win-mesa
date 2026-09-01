@@ -859,10 +859,10 @@ ensure_zink_present_context(Device *device)
    if (!device->device.base.createContext)
       return false;
 
-   /* The current KMD requires both engine affinity one and the explicit GDI
-    * context flag. GDI contexts carry no private create payload. */
+   /* D3DDDICB_CREATECONTEXT has no UMD GDI selector. The KMD identifies this
+    * standard Present context by engine affinity one and an empty private
+    * create payload. */
    device->device.use_legacy_signal_sync = true;
-   device->device.create_gdi_context = true;
    NTSTATUS status = device->device.base.createContext(
       &device->device.base, &device->zink_present_context);
    if (!NT_SUCCESS(status) || !device->zink_present_context) {

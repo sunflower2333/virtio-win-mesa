@@ -103,14 +103,13 @@ for fragment in (
     require(resource_text, fragment, resource)
 require(resource_text, "resource->zink_present_primary || subresource != 0", resource)
 
-# Context creation is lazy, uses the KMD's GDI engine affinity, and is released
-# before the Gallium device is destroyed.
+# Context creation is lazy, uses engine affinity one with zero UMD flags and an
+# empty private payload, and is released before the Gallium device is destroyed.
 require_order(
     resource_text,
     (
         "if (device->zink_present_context)",
         "device->device.use_legacy_signal_sync = true;",
-        "device->device.create_gdi_context = true;",
         "device->device.base.createContext(",
     ),
     resource,
@@ -118,14 +117,20 @@ require_order(
 require_order(
     gdikmt_runtime_text,
     (
+        "memset(&createContext, 0, sizeof(createContext));",
         "if (device->use_legacy_signal_sync)",
         "createContext.EngineAffinity = 1;",
-        "if (device->create_gdi_context)",
-        "createContext.Flags.GdiContext = 1;",
         "pfnCreateContextCb",
     ),
     gdikmt_runtime,
 )
+for source_text, source in (
+    (gdikmt_runtime_text, gdikmt_runtime),
+    (resource_text, resource),
+):
+    for forbidden in ("create_gdi_context", "Flags.GdiContext"):
+        if forbidden in source_text:
+            raise AssertionError(f"unsupported UMD GDI selector {forbidden!r} in {source}")
 require_order(
     device_text,
     (

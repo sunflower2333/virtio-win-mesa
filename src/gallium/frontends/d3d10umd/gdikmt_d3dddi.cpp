@@ -361,8 +361,6 @@ gdikmt_d3dddi_createcontext(struct gdikmt_device *_device,
    memset(&createContext, 0, sizeof(createContext));
    if (device->use_legacy_signal_sync)
       createContext.EngineAffinity = 1;
-   if (device->create_gdi_context)
-      createContext.Flags.GdiContext = 1;
    NTSTATUS Status = gdikmt_d3dddi_record_status(
       _device,
       device->KTCallbacks.pfnCreateContextCb(device->hRTDevice,

@@ -18,7 +18,6 @@ struct gdikmt_device_d3dddi {
    const D3D10DDIARG_OPENRESOURCE *pOpenResource;
    const D3DDDIARG_OPENRESOURCE *pD3D9OpenResource;
    boolean use_legacy_signal_sync;
-   boolean create_gdi_context;
    D3DDDI_DEVICECALLBACKS KTCallbacks;
 };
 
