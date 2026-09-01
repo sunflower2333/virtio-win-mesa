@@ -2004,6 +2004,13 @@ zink_resource_get_handle(struct pipe_screen *pscreen,
                          struct winsys_handle *whandle,
                          unsigned usage)
 {
+#ifdef _WIN32
+   /* A Vulkan opaque Win32 handle is not a WDDM allocation handle. Returning
+    * success here would pass allocation zero to the D3D/DXGI Present path.
+    */
+   if (whandle->type == WINSYS_HANDLE_TYPE_D3DKMT_ALLOC)
+      return false;
+#endif
    if (tex->target == PIPE_BUFFER)
       tc_buffer_disable_cpu_storage(tex);
 #ifdef HAVE_LIBDRM

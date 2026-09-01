@@ -38,6 +38,9 @@
 #include "yttrium/gdi/yttrium_gdi_public.h"
 #include "yttrium/gdi/yttrium_trace.h"
 #endif
+#ifdef GALLIUM_ZINK
+#include "zink/zink_public.h"
+#endif
 
 #include "winddk_compat.h"
 #include <d3dkmthk.h>
@@ -142,6 +145,8 @@ d3d10_create_screen(struct gdikmt_device* device)
    default_driver = "yttrium";
 #elif defined(GALLIUM_VIRGL)
    default_driver = "virgl";
+#elif defined(GALLIUM_ZINK)
+   default_driver = "zink";
 #elif defined(GALLIUM_LLVMPIPE)
    default_driver = "llvmpipe";
 #else
@@ -166,6 +171,16 @@ d3d10_create_screen(struct gdikmt_device* device)
       yttrium_gdi_user_logf("d3d10umd: create_screen using yttrium device=%p\n",
                             device);
       return yttrium_gdi_screen_create(device);
+   }
+#endif
+
+#ifdef GALLIUM_ZINK
+   if (strcmp(driver, "zink") == 0) {
+      /* This first slice is deliberately offscreen-only. Passing no LUID
+       * lets Zink load the installed Vulkan ICD, but it does not establish a
+       * D3D runtime allocation identity for DXGI Present.
+       */
+      return zink_win32_create_screen(0);
    }
 #endif
 

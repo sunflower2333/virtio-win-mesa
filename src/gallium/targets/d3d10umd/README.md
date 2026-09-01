@@ -47,6 +47,20 @@ following once:
 
 See also <https://docs.microsoft.com/en-us/windows/win32/dlls/dynamic-link-library-search-order>
 
+## Zink offscreen probe
+
+A Windows build with `-Dgallium-drivers=zink` can select Zink through
+`GALLIUM_DRIVER=zink`. This is an offscreen D3D GPU-development slice: Zink
+loads the installed Vulkan ICD and can exercise Gallium rendering, but it does
+not export `WINSYS_HANDLE_TYPE_D3DKMT_ALLOC`. The target therefore rejects that
+handle request and must not be installed as the display UMD or used for DXGI
+Present until a versioned WDDM allocation bridge is implemented.
+
+The `zink_d3d11_offscreen.exe` probe loads `viogpud3d-zink.dll` from its
+application directory, clears a 64x64 RGBA8 render target to red, copies it to
+a staging texture, and validates every mapped pixel plus checksum `2088960`.
+It creates no window or swap chain and does not call DXGI Present.
+
 ## Yttrium configuration
 
 Yttrium options read through `yttrium_gdi_debug_get_option()` first consult the

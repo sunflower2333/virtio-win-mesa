@@ -11,12 +11,16 @@ libgallium_d3d10_def = custom_target(
 
 gallium_d3d10_name = get_option('gallium-d3d10-dll-name')
 gallium_d3d10_deps = [
-  dep_ws2_32, idep_nir, driver_swrast, driver_virgl, winsys_yttrium_gdi,
+  dep_ws2_32, idep_nir, driver_swrast, driver_virgl, driver_zink,
+  winsys_yttrium_gdi,
   idep_mesautil
 ]
 gallium_d3d10_c_args = []
 if with_gallium_yttrium
   gallium_d3d10_c_args += '-DGALLIUM_YTTRIUM'
+endif
+if with_gallium_zink
+  gallium_d3d10_c_args += '-DGALLIUM_ZINK'
 endif
 libgallium_d3d10 = shared_library(
   gallium_d3d10_name,
@@ -34,6 +38,16 @@ libgallium_d3d10 = shared_library(
   name_prefix: '',
   install : true,
 )
+
+if with_gallium_zink
+  executable(
+    'zink_d3d11_offscreen',
+    files('tests/zink_d3d11_offscreen.cpp'),
+    cpp_args : [cpp_msvc_compat_args],
+    dependencies : [cpp.find_library('d3d11')],
+    install : false,
+  )
+endif
 
 #if with_tests
 if true

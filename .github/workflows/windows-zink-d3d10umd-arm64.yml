@@ -1,0 +1,175 @@
+name: Windows Zink D3D10 UMD ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - wip/windows-zink-d3d10umd
+    paths:
+      - "meson.build"
+      - "meson.options"
+      - "src/gallium/auxiliary/**"
+      - "src/gallium/drivers/zink/**"
+      - "src/gallium/frontends/d3d10umd/**"
+      - "src/gallium/targets/d3d10umd/**"
+      - ".github/workflows/windows-zink-d3d10umd-arm64.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ARM64 offscreen DLL and probe
+    runs-on: windows-2025-vs2026
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC and WDK
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64_arm64
+
+      - name: Set up Python build tools
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install Meson generators
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade `
+            "meson==1.9.1" mako packaging pyyaml
+
+      - name: Install Windows flex and bison
+        shell: pwsh
+        run: |
+          $flex = Get-Command win_flex.exe -ErrorAction SilentlyContinue
+          $bison = Get-Command win_bison.exe -ErrorAction SilentlyContinue
+          if ($null -eq $flex -or $null -eq $bison) {
+            choco install winflexbison3 --yes --no-progress
+            if ($LASTEXITCODE -ne 0) {
+              throw "Chocolatey WinFlexBison installation failed"
+            }
+            $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+            $env:Path = "$machinePath;$env:Path"
+            $flex = Get-Command win_flex.exe -ErrorAction SilentlyContinue
+            $bison = Get-Command win_bison.exe -ErrorAction SilentlyContinue
+          }
+          if ($null -eq $flex -or $null -eq $bison) {
+            throw "WinFlexBison binaries were not found"
+          }
+          $flexBin = Split-Path -Parent $flex.Path
+          $env:Path = "$flexBin;$env:Path"
+          Add-Content -Path $env:GITHUB_PATH -Value $flexBin
+
+      - name: Verify offscreen source contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_zink_offscreen_contract.py
+
+      - name: Configure ARM64 Zink D3D UMD
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP "mesa-zink-d3d10umd-arm64"
+          $crossFile = Join-Path $env:RUNNER_TEMP "mesa-zink-d3d10umd-arm64.ini"
+          $crossFileLines = @(
+            '[binaries]'
+            "c = ['clang-cl', '--target=aarch64-pc-windows-msvc']"
+            "cpp = ['clang-cl', '--target=aarch64-pc-windows-msvc']"
+            "ar = 'llvm-lib'"
+            ''
+            '[host_machine]'
+            "system = 'windows'"
+            "cpu_family = 'aarch64'"
+            "cpu = 'arm64'"
+            "endian = 'little'"
+            ''
+            '[properties]'
+            'needs_exe_wrapper = true'
+          )
+          Set-Content -LiteralPath $crossFile -Value $crossFileLines -Encoding ascii
+          meson setup $buildDir . --cross-file $crossFile `
+            --backend=ninja --buildtype=release `
+            -Dplatforms=windows `
+            -Dvulkan-drivers=[] `
+            -Dgallium-drivers=zink `
+            -Dgallium-d3d10umd=true `
+            -Dgallium-yttrium=false `
+            -Dgallium-d3d10-dll-name=viogpud3d-zink `
+            -Dopengl=false -Dgles1=disabled -Dgles2=disabled `
+            -Degl=disabled -Dglx=disabled -Dgbm=disabled `
+            -Dllvm=disabled -Dshader-cache=disabled `
+            -Dzlib=disabled -Dzstd=disabled `
+            -Db_vscrt=static_from_buildtype `
+            -Dtools=[] -Dbuild-tests=false -Dwerror=false
+
+      - name: Compile and audit ARM64 DLL and probe
+        shell: pwsh
+        run: |
+          $buildDir = Join-Path $env:RUNNER_TEMP "mesa-zink-d3d10umd-arm64"
+          meson compile -C $buildDir --ninja-args=-k0 viogpud3d-zink zink_d3d11_offscreen
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $dlls = @(Get-ChildItem -Path $buildDir -Recurse -File -Filter 'viogpud3d-zink.dll')
+          if ($dlls.Count -ne 1) {
+            throw "expected one viogpud3d-zink.dll, found $($dlls.Count)"
+          }
+          $dll = $dlls[0]
+          $headers = & dumpbin /headers $dll.FullName 2>&1
+          if ($LASTEXITCODE -ne 0 -or -not ($headers -match 'AA64 machine')) {
+            throw "Zink D3D UMD is not an ARM64 PE image"
+          }
+          $exports = & dumpbin /exports $dll.FullName 2>&1
+          if ($LASTEXITCODE -ne 0 -or
+              -not ($exports -match '\bOpenAdapter10\b') -or
+              -not ($exports -match '\bOpenAdapter10_2\b')) {
+            throw "Zink D3D UMD is missing required adapter exports"
+          }
+          $probes = @(Get-ChildItem -Path $buildDir -Recurse -File -Filter 'zink_d3d11_offscreen.exe')
+          if ($probes.Count -ne 1) {
+            throw "expected one zink_d3d11_offscreen.exe, found $($probes.Count)"
+          }
+          $probe = $probes[0]
+          $probeHeaders = & dumpbin /headers $probe.FullName 2>&1
+          if ($LASTEXITCODE -ne 0 -or -not ($probeHeaders -match 'AA64 machine')) {
+            throw "Zink D3D11 offscreen probe is not an ARM64 PE image"
+          }
+          $probeImports = & dumpbin /imports $probe.FullName 2>&1
+          if ($LASTEXITCODE -ne 0 -or -not ($probeImports -match '\bD3D11CreateDevice\b')) {
+            throw "Zink D3D11 offscreen probe does not import D3D11CreateDevice"
+          }
+          New-Item -ItemType Directory -Path artifact -Force | Out-Null
+          Copy-Item -LiteralPath $dll.FullName -Destination artifact
+          Copy-Item -LiteralPath $probe.FullName -Destination artifact
+          Get-ChildItem -Path artifact -File |
+            Sort-Object Name |
+            Get-FileHash -Algorithm SHA256 |
+            Format-List
+
+      - name: Assert no-install package policy
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -Path artifact -Recurse -File)
+          if ($files.Count -ne 2) {
+            throw "offscreen artifact must contain exactly two files, found $($files.Count)"
+          }
+          $unexpected = @(Get-ChildItem -Path artifact -Recurse -File -Include *.inf,*.sys,*.cat)
+          if ($unexpected.Count -ne 0) {
+            throw "offscreen artifact contains installable driver files"
+          }
+          if (-not (Test-Path -LiteralPath artifact/viogpud3d-zink.dll)) {
+            throw "offscreen artifact DLL is missing"
+          }
+          if (-not (Test-Path -LiteralPath artifact/zink_d3d11_offscreen.exe)) {
+            throw "offscreen artifact probe is missing"
+          }
+
+      - name: Upload ARM64 offscreen bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: viogpud3d-zink-offscreen-arm64
+          path: |
+            artifact/viogpud3d-zink.dll
+            artifact/zink_d3d11_offscreen.exe
+          if-no-files-found: error
+          retention-days: 7
