@@ -147,6 +147,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_tessellation_stage_bindings.py
 
+      - name: Verify format support error contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_format_support_errors.py
+
       - name: Verify UAV creation failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_uav_creation_failure.py

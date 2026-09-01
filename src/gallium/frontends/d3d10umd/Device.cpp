@@ -1549,6 +1549,41 @@ is_format_supported_with_fallback(struct pipe_screen *screen,
 }
 
 static bool
+IsDefinedDxgiFormat(DXGI_FORMAT format)
+{
+   const unsigned value = static_cast<unsigned>(format);
+
+   return (value >= DXGI_FORMAT_R32G32B32A32_TYPELESS &&
+           value <= DXGI_FORMAT_B4G4R4A4_UNORM) ||
+          (value >= DXGI_FORMAT_P208 && value <= DXGI_FORMAT_V408) ||
+          (value >= DXGI_FORMAT_SAMPLER_FEEDBACK_MIN_MIP_OPAQUE &&
+           value <= DXGI_FORMAT_A4B4G4R4_UNORM);
+}
+
+static bool
+IsNotSupportedDxgiFormat(DXGI_FORMAT format)
+{
+   switch (format) {
+   case DXGI_FORMAT_A8P8:
+   case DXGI_FORMAT_AI44:
+   case DXGI_FORMAT_AYUV:
+   case DXGI_FORMAT_IA44:
+   case DXGI_FORMAT_NV11:
+   case DXGI_FORMAT_P010:
+   case DXGI_FORMAT_P016:
+   case DXGI_FORMAT_P8:
+   case DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM:
+   case DXGI_FORMAT_Y210:
+   case DXGI_FORMAT_Y216:
+   case DXGI_FORMAT_Y410:
+   case DXGI_FORMAT_Y416:
+      return true;
+   default:
+      return false;
+   }
+}
+
+static bool
 IsYttriumMsaaSampleCount(unsigned sample_count)
 {
    return sample_count == 2 || sample_count == 4 || sample_count == 8;
@@ -1815,15 +1850,26 @@ CheckFormatSupport(D3D10DDI_HDEVICE hDevice, // IN
 {
    //LOG_ENTRYPOINT();
 
+   if (!pFormatCaps) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+   }
+
+   *pFormatCaps = 0;
+
+   if (!IsDefinedDxgiFormat(Format)) {
+      SetError(hDevice, E_FAIL);
+      return;
+   }
+
    Device *device = CastDevice(hDevice);
    struct pipe_context *pipe = device->pipe;
    struct pipe_screen *screen = pipe->screen;
 
-   *pFormatCaps = 0;
-
    enum pipe_format format = FormatTranslate(Format, false);
    if (format == PIPE_FORMAT_NONE) {
-      *pFormatCaps = D3D10_DDI_FORMAT_SUPPORT_NOT_SUPPORTED;
+      if (IsNotSupportedDxgiFormat(Format))
+         *pFormatCaps = D3D10_DDI_FORMAT_SUPPORT_NOT_SUPPORTED;
       return;
    }
 
