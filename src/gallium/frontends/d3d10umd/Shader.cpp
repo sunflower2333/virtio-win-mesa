@@ -165,6 +165,17 @@ InitShaderObject(Shader *shader, mesa_shader_stage stage)
    InitShaderOutputMapping(shader);
 }
 
+static void
+FailShaderCreation(D3D10DDI_HDEVICE hDevice, Shader *shader, HRESULT error)
+{
+   if (shader->state.tokens) {
+      ureg_free_tokens(shader->state.tokens);
+      shader->state.tokens = NULL;
+   }
+   shader->compute_state.prog = NULL;
+   SetError(hDevice, error);
+}
+
 static unsigned
 GetComputeEmulation(const UINT *code, unsigned store_imm[4])
 {
@@ -1883,9 +1894,17 @@ CreateVertexShader(D3D10DDI_HDEVICE hDevice,                                  //
    pShader->state.tokens =
       Shader_tgsi_translate(pCode, pShader->output_mapping, NULL, NULL,
                             NULL, NULL);
+   if (!pShader->state.tokens) {
+      YTTRIUM_WARN("yttrium: d3d10umd vertex shader translation failed\n");
+      FailShaderCreation(hDevice, pShader, E_FAIL);
+      return;
+   }
 
    pShader->handle = pipe->create_vs_state(pipe, &pShader->state);
-
+   if (!pShader->handle) {
+      YTTRIUM_WARN("yttrium: d3d10umd vertex shader state creation failed\n");
+      FailShaderCreation(hDevice, pShader, E_OUTOFMEMORY);
+   }
 }
 
 
@@ -2019,8 +2038,17 @@ CreateGeometryShader(D3D10DDI_HDEVICE hDevice,                                //
    pShader->state.tokens =
       Shader_tgsi_translate(pShaderCode, pShader->output_mapping, NULL, NULL,
                             NULL, NULL);
+   if (!pShader->state.tokens) {
+      YTTRIUM_WARN("yttrium: d3d10umd geometry shader translation failed\n");
+      FailShaderCreation(hDevice, pShader, E_FAIL);
+      return;
+   }
 
    pShader->handle = pipe->create_gs_state(pipe, &pShader->state);
+   if (!pShader->handle) {
+      YTTRIUM_WARN("yttrium: d3d10umd geometry shader state creation failed\n");
+      FailShaderCreation(hDevice, pShader, E_OUTOFMEMORY);
+   }
 }
 
 SIZE_T APIENTRY
@@ -2234,7 +2262,7 @@ CreateGeometryShaderWithStreamOutput(
                                NULL, NULL, NULL, NULL);
       if (!pShader->state.tokens) {
          YTTRIUM_WARN("yttrium: d3d10umd geometry stream-output shader translation failed; creation rejected\n");
-         SetError(hDevice, E_FAIL);
+         FailShaderCreation(hDevice, pShader, E_FAIL);
          return;
       }
    }
@@ -2299,6 +2327,10 @@ CreateGeometryShaderWithStreamOutput(
    }
 
    pShader->handle = pipe->create_gs_state(pipe, &pShader->state);
+   if (!pShader->handle) {
+      YTTRIUM_WARN("yttrium: d3d10umd geometry stream-output shader state creation failed\n");
+      FailShaderCreation(hDevice, pShader, E_OUTOFMEMORY);
+   }
 }
 
 
@@ -2412,7 +2444,7 @@ CreatePixelShader(D3D10DDI_HDEVICE hDevice,                                // IN
    if (!pShader->state.tokens) {
       YTTRIUM_WARN("yttrium: d3d10umd pixel shader translation failed shader=%p; CreatePixelShader failing\n",
                    (void *)pShader);
-      SetError(hDevice, E_FAIL);
+      FailShaderCreation(hDevice, pShader, E_FAIL);
       return;
    }
 
@@ -2420,7 +2452,7 @@ CreatePixelShader(D3D10DDI_HDEVICE hDevice,                                // IN
    if (!pShader->handle) {
       YTTRIUM_WARN("yttrium: d3d10umd pixel shader state creation failed shader=%p\n",
                    (void *)pShader);
-      SetError(hDevice, E_FAIL);
+      FailShaderCreation(hDevice, pShader, E_OUTOFMEMORY);
    }
 }
 
@@ -3343,6 +3375,11 @@ CreateComputeShader(D3D10DDI_HDEVICE hDevice,
    pShader->state.tokens =
       Shader_tgsi_translate(pCode, NULL, pShader->thread_group_size,
                             &static_shared_mem, NULL, NULL);
+   if (!pShader->state.tokens) {
+      YTTRIUM_WARN("yttrium: d3d10umd compute shader translation failed\n");
+      FailShaderCreation(hDevice, pShader, E_FAIL);
+      return;
+   }
 
    pShader->compute_state.ir_type = PIPE_SHADER_IR_TGSI;
    pShader->compute_state.prog = pShader->state.tokens;
@@ -3350,6 +3387,10 @@ CreateComputeShader(D3D10DDI_HDEVICE hDevice,
 
    pShader->handle =
       pipe->create_compute_state(pipe, &pShader->compute_state);
+   if (!pShader->handle) {
+      YTTRIUM_WARN("yttrium: d3d10umd compute shader state creation failed\n");
+      FailShaderCreation(hDevice, pShader, E_OUTOFMEMORY);
+   }
 }
 
 void APIENTRY
