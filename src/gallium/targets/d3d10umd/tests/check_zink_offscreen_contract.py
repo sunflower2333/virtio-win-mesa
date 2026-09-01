@@ -14,6 +14,7 @@ def require(text: str, fragment: str, source: Path) -> None:
 meson = ROOT / "meson.build"
 target = ROOT / "src/gallium/targets/d3d10umd/d3d10_gdi.c"
 target_meson = ROOT / "src/gallium/targets/d3d10umd/meson.build"
+stubs = ROOT / "src/gallium/frontends/d3d10umd/YttriumStubs.cpp"
 resource = ROOT / "src/gallium/drivers/zink/zink_resource.c"
 atomic = ROOT / "src/util/u_atomic.h"
 probe = ROOT / "src/gallium/targets/d3d10umd/tests/zink_d3d11_offscreen.cpp"
@@ -22,6 +23,7 @@ workflow = ROOT / ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 meson_text = meson.read_text(encoding="utf-8")
 target_text = target.read_text(encoding="utf-8")
 target_meson_text = target_meson.read_text(encoding="utf-8")
+stubs_text = stubs.read_text(encoding="utf-8")
 resource_text = resource.read_text(encoding="utf-8")
 atomic_text = atomic.read_text(encoding="utf-8")
 probe_text = probe.read_text(encoding="utf-8")
@@ -29,11 +31,26 @@ workflow_text = workflow.read_text(encoding="utf-8")
 
 require(meson_text, "with_gallium_zink,", meson)
 require(target_meson_text, "driver_zink,", target_meson)
+require(target_meson_text, "idep_mesautil, idep_xmlconfig", target_meson)
 require(target_meson_text, "'-DGALLIUM_ZINK'", target_meson)
 require(target_text, '#include "zink/zink_public.h"', target)
 require(target_text, 'default_driver = "zink";', target)
 require(target_text, "return zink_win32_create_screen(0);", target)
 require(resource_text, "whandle->type == WINSYS_HANDLE_TYPE_D3DKMT_ALLOC", resource)
+for symbol in (
+    "yttrium_trace_logf",
+    "yttrium_venus_create",
+    "yttrium_venus_destroy",
+    "yttrium_venus_framebuffer_color_sample_counts",
+    "yttrium_venus_max_sampler_anisotropy",
+):
+    require(stubs_text, symbol, stubs)
+
+venus_create = stubs_text.index("yttrium_venus_create(struct gdikmt_device *device)")
+venus_reject = stubs_text.index("return NULL;", venus_create)
+venus_destroy = stubs_text.index("yttrium_venus_destroy", venus_create)
+if not venus_create < venus_reject < venus_destroy:
+    raise AssertionError("non-Yttrium Venus creation is not fail-closed")
 require(
     atomic_text,
     "defined(__clang__) && defined(USE_GCC_ATOMIC_BUILTINS)",

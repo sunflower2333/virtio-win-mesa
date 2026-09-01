@@ -13,7 +13,7 @@ gallium_d3d10_name = get_option('gallium-d3d10-dll-name')
 gallium_d3d10_deps = [
   dep_ws2_32, idep_nir, driver_swrast, driver_virgl, driver_zink,
   winsys_yttrium_gdi,
-  idep_mesautil
+  idep_mesautil, idep_xmlconfig
 ]
 gallium_d3d10_c_args = []
 if with_gallium_yttrium
