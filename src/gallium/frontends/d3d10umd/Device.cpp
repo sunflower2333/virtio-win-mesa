@@ -89,6 +89,14 @@ DeviceResetCallback(void *data, enum pipe_reset_status status)
                                       D3DDDIERR_DEVICEREMOVED);
 }
 
+static bool
+DeviceHasReset(Device *pDevice)
+{
+   struct pipe_context *pipe = pDevice ? pDevice->pipe : NULL;
+   return pipe && pipe->get_device_reset_status &&
+          pipe->get_device_reset_status(pipe) != PIPE_NO_RESET;
+}
+
 static unsigned
 FeatureLevelFromCreateDevice(const D3D10DDIARG_CREATEDEVICE *pCreateData)
 {
@@ -142,8 +150,15 @@ FeatureLevelFromCreateDevice(const D3D10DDIARG_CREATEDEVICE *pCreateData)
 static BOOL APIENTRY
 Flush11_1(D3D10DDI_HDEVICE hDevice, UINT FlushFlags)
 {
+   Device *device = CastDevice(hDevice);
+
+   /* The target Gallium backends already suppress empty submissions. */
+   (void)FlushFlags;
+   if (DeviceHasReset(device))
+      return FALSE;
+
    Flush(hDevice);
-   return TRUE;
+   return DeviceHasReset(device) ? FALSE : TRUE;
 }
 
 static void APIENTRY
