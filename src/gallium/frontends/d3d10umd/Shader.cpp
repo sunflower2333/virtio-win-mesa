@@ -3619,6 +3619,7 @@ CreateShaderResourceView(
    enum pipe_format format;
 
    list_inithead(&pSRView->list);
+   pSRView->handle = NULL;
    pSRView->resource = CastResource(pCreateSRView->hDrvResource);
    pSRView->buffer_raw = false;
    pSRView->buffer_structured = false;
@@ -3691,11 +3692,16 @@ CreateShaderResourceView(
       assert(pCreateSRView->TexCube.MipLevels != 0 && pCreateSRView->TexCube.MipLevels != (UINT)-1);
       break;
    default:
-      assert(0);
+      LOG_UNSUPPORTED(true);
+      SetError(hDevice, E_INVALIDARG);
       return;
    }
 
    pSRView->handle = pipe->create_sampler_view(pipe, resource, &desc);
+   if (!pSRView->handle) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+   }
    ResourceEvent(RESOURCE_EVENT_SRV_CREATE,
                  (uint64_t)hRTShaderResourceView.handle,
                  pSRView,
@@ -3735,6 +3741,7 @@ CreateShaderResourceView1(
    enum pipe_format format;
 
    list_inithead(&pSRView->list);
+   pSRView->handle = NULL;
    pSRView->resource = CastResource(pCreateSRView->hDrvResource);
    pSRView->buffer_raw = false;
    pSRView->buffer_structured = false;
@@ -3809,11 +3816,16 @@ CreateShaderResourceView1(
       assert(pCreateSRView->TexCube.MipLevels != 0 && pCreateSRView->TexCube.MipLevels != (UINT)-1);
       break;
    default:
-      assert(0);
+      LOG_UNSUPPORTED(true);
+      SetError(hDevice, E_INVALIDARG);
       return;
    }
 
    pSRView->handle = pipe->create_sampler_view(pipe, resource, &desc);
+   if (!pSRView->handle) {
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+   }
    ResourceEvent(RESOURCE_EVENT_SRV_CREATE,
                  (uint64_t)hRTShaderResourceView.handle,
                  pSRView,
@@ -3871,9 +3883,11 @@ CreateShaderResourceView11(
                              hRTShaderResourceView);
 
    ShaderResourceView *pSRView = CastShaderResourceView(hShaderResourceView);
-   if ((pCreateSRView->ResourceDimension == D3D10DDIRESOURCE_BUFFER ||
-        pCreateSRView->ResourceDimension == D3D11DDIRESOURCE_BUFFEREX) &&
-       pSRView) {
+   if (!pSRView || !pSRView->handle)
+      return;
+
+   if (pCreateSRView->ResourceDimension == D3D10DDIRESOURCE_BUFFER ||
+       pCreateSRView->ResourceDimension == D3D11DDIRESOURCE_BUFFEREX) {
       pSRView->buffer_raw =
          pCreateSRView->BufferEx.Flags & D3D11_DDI_BUFFEREX_SRV_FLAG_RAW;
       if (pSRView->buffer_raw)
