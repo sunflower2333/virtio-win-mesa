@@ -1051,7 +1051,6 @@ CreateEmptyShader(Device *pDevice,
       handle = NULL;
       assert(0);
    }
-   assert(handle);
 
    ureg_free_tokens(tokens);
 

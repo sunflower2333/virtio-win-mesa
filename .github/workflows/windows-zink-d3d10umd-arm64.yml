@@ -123,6 +123,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_fixed_function_state_failures.py
 
+      - name: Verify device creation failure contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_device_creation_failures.py
+
       - name: Verify shader creation failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_shader_creation_failures.py

@@ -803,6 +803,36 @@ FillDeviceFuncsWDDM1_3(D3DWDDM1_3DDI_DEVICEFUNCS *funcs)
 
 EXTERN_C bool use_old_tex_ops = false;
 
+static HRESULT
+FailDevicePipelineStateCreation(Device *pDevice)
+{
+   struct pipe_context *pipe = pDevice->pipe;
+   struct pipe_screen *screen = pDevice->screen;
+
+   if (pDevice->default_depth_stencil_state) {
+      pipe->delete_depth_stencil_alpha_state(
+         pipe, pDevice->default_depth_stencil_state);
+      pDevice->default_depth_stencil_state = NULL;
+   }
+   if (pDevice->empty_fs) {
+      DeleteEmptyShader(pDevice, MESA_SHADER_FRAGMENT, pDevice->empty_fs);
+      pDevice->empty_fs = NULL;
+   }
+   if (pDevice->empty_vs) {
+      DeleteEmptyShader(pDevice, MESA_SHADER_VERTEX, pDevice->empty_vs);
+      pDevice->empty_vs = NULL;
+   }
+
+   cso_destroy_context(pDevice->cso);
+   pDevice->cso = NULL;
+   pipe->destroy(pipe);
+   pDevice->pipe = NULL;
+   screen->destroy(screen);
+   pDevice->screen = NULL;
+   mtx_destroy(&pDevice->CreateResourceMtx);
+   return E_OUTOFMEMORY;
+}
+
 /*
  * ----------------------------------------------------------------------
  *
@@ -951,7 +981,17 @@ CreateDevice(D3D10DDI_HADAPTER hAdapter,                 // IN
    }
 
    pDevice->empty_vs = CreateEmptyShader(pDevice, MESA_SHADER_VERTEX);
+   if (!pDevice->empty_vs) {
+      DebugPrintf("%s: failed to create empty vertex shader\n", __func__);
+      return FailDevicePipelineStateCreation(pDevice);
+   }
+
    pDevice->empty_fs = CreateEmptyShader(pDevice, MESA_SHADER_FRAGMENT);
+   if (!pDevice->empty_fs) {
+      DebugPrintf("%s: failed to create empty fragment shader\n", __func__);
+      return FailDevicePipelineStateCreation(pDevice);
+   }
+
    struct pipe_depth_stencil_alpha_state default_dsa;
    memset(&default_dsa, 0, sizeof default_dsa);
    default_dsa.depth_enabled = 1;
@@ -961,13 +1001,7 @@ CreateDevice(D3D10DDI_HADAPTER hAdapter,                 // IN
       pipe->create_depth_stencil_alpha_state(pipe, &default_dsa);
    if (!pDevice->default_depth_stencil_state) {
       DebugPrintf("%s: failed to create default depth/stencil state\n", __func__);
-      DeleteEmptyShader(pDevice, MESA_SHADER_FRAGMENT, pDevice->empty_fs);
-      DeleteEmptyShader(pDevice, MESA_SHADER_VERTEX, pDevice->empty_vs);
-      cso_destroy_context(cso);
-      pipe->destroy(pipe);
-      screen->destroy(screen);
-      mtx_destroy(&pDevice->CreateResourceMtx);
-      return E_FAIL;
+      return FailDevicePipelineStateCreation(pDevice);
    }
 
    pipe->bind_vs_state(pipe, pDevice->empty_vs);
