@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import re
 from pathlib import Path
 
 
@@ -58,12 +59,38 @@ for fragment in (
     require(set_predication, fragment, query)
 
 check_predicate = function_body(query_text, "CheckPredicate(Device *pDevice)", query)
+is_predicate_query = function_body(
+    query_text,
+    "IsPredicateQuery(D3D10DDI_QUERY query)",
+    query,
+)
+expected_predicate_types = {
+    "D3D10DDI_QUERY_OCCLUSIONPREDICATE",
+    "D3D10DDI_QUERY_STREAMOVERFLOWPREDICATE",
+    "D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM0",
+    "D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM1",
+    "D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM2",
+    "D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM3",
+}
+actual_predicate_types = set(
+    re.findall(r"case (D3D(?:10|11)DDI_QUERY_[A-Z0-9_]+):", is_predicate_query)
+)
+if actual_predicate_types != expected_predicate_types:
+    raise AssertionError(
+        "predicate query classification mismatch: "
+        f"expected {sorted(expected_predicate_types)!r}, "
+        f"found {sorted(actual_predicate_types)!r}"
+    )
+for fragment in ("return true;", "default:\n      return false;"):
+    require(is_predicate_query, fragment, query)
+
 wait_fragment = (
     "const bool wait =\n"
     "      !(pQuery->Flags & D3D10DDI_QUERY_MISCFLAG_PREDICATEHINT);"
 )
 result_fragment = "pipe->get_query_result(pipe, query, wait, &result)"
 for fragment in (
+    "assert(IsPredicateQuery(pQuery->Type));",
     wait_fragment,
     result_fragment,
     "if (!ret) {\n      return true;",

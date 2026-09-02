@@ -473,6 +473,23 @@ SetPredication(D3D10DDI_HDEVICE hDevice,  // IN
 }
 
 
+static bool
+IsPredicateQuery(D3D10DDI_QUERY query)
+{
+   switch (query) {
+   case D3D10DDI_QUERY_OCCLUSIONPREDICATE:
+   case D3D10DDI_QUERY_STREAMOVERFLOWPREDICATE:
+   case D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM0:
+   case D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM1:
+   case D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM2:
+   case D3D11DDI_QUERY_STREAMOVERFLOWPREDICATE_STREAM3:
+      return true;
+   default:
+      return false;
+   }
+}
+
+
 /*
  * ----------------------------------------------------------------------
  *
@@ -491,8 +508,7 @@ CheckPredicate(Device *pDevice)
       return true;
    }
 
-   assert(pQuery->Type == D3D10DDI_QUERY_OCCLUSIONPREDICATE ||
-          pQuery->Type == D3D10DDI_QUERY_STREAMOVERFLOWPREDICATE);
+   assert(IsPredicateQuery(pQuery->Type));
 
    struct pipe_context *pipe = pDevice->pipe;
    struct pipe_query *query = pQuery->handle;
