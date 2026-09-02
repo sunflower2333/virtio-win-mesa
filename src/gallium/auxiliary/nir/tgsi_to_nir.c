@@ -2008,6 +2008,20 @@ ttn_mem(struct ttn_compile *c, nir_def **src)
       case TGSI_OPCODE_STORE:
          op = nir_intrinsic_store_ssbo;
          break;
+      case TGSI_OPCODE_ATOMCAS:
+         op = nir_intrinsic_ssbo_atomic_swap;
+         break;
+      case TGSI_OPCODE_ATOMUADD:
+      case TGSI_OPCODE_ATOMXCHG:
+      case TGSI_OPCODE_ATOMAND:
+      case TGSI_OPCODE_ATOMOR:
+      case TGSI_OPCODE_ATOMXOR:
+      case TGSI_OPCODE_ATOMUMIN:
+      case TGSI_OPCODE_ATOMUMAX:
+      case TGSI_OPCODE_ATOMIMIN:
+      case TGSI_OPCODE_ATOMIMAX:
+         op = nir_intrinsic_ssbo_atomic;
+         break;
       default:
          UNREACHABLE("unexpected buffer opcode");
       }
@@ -2015,19 +2029,36 @@ ttn_mem(struct ttn_compile *c, nir_def **src)
       add_ssbo_var(c, resource_index);
 
       instr = nir_intrinsic_instr_create(b->shader, op);
-      instr->num_components = util_last_bit(tgsi_inst->Dst[0].Register.WriteMask);
-      nir_intrinsic_set_access(instr, get_mem_qualifier(tgsi_inst));
-      nir_intrinsic_set_align(instr, 4, 0);
-
       unsigned i = 0;
-      if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_STORE)
+      if (is_atomic) {
+         instr->src[i++] = nir_src_for_ssa(nir_imm_int(b, resource_index));
+         instr->src[i++] =
+            nir_src_for_ssa(ttn_channel(b, src[addr_src_index], X));
+         instr->src[i++] = nir_src_for_ssa(ttn_channel(b, src[2], X));
+         if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_ATOMCAS)
+            instr->src[i++] = nir_src_for_ssa(ttn_channel(b, src[3], X));
+         nir_intrinsic_set_access(instr, get_mem_qualifier(tgsi_inst));
+         nir_intrinsic_set_atomic_op(instr,
+                                     ttn_atomic_op(tgsi_inst->Instruction.Opcode));
+      } else {
+         instr->num_components =
+            util_last_bit(tgsi_inst->Dst[0].Register.WriteMask);
+         nir_intrinsic_set_access(instr, get_mem_qualifier(tgsi_inst));
+         nir_intrinsic_set_align(instr, 4, 0);
+      }
+
+      if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_STORE) {
          instr->src[i++] = nir_src_for_ssa(nir_swizzle(b, src[1], SWIZ(X, Y, Z, W),
                                                        instr->num_components));
-      instr->src[i++] = nir_src_for_ssa(nir_imm_int(b, resource_index));
-      instr->src[i++] = nir_src_for_ssa(ttn_channel(b, src[addr_src_index], X));
-
-      if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_STORE)
+         instr->src[i++] = nir_src_for_ssa(nir_imm_int(b, resource_index));
+         instr->src[i++] =
+            nir_src_for_ssa(ttn_channel(b, src[addr_src_index], X));
          nir_intrinsic_set_write_mask(instr, tgsi_inst->Dst[0].Register.WriteMask);
+      } else if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_LOAD) {
+         instr->src[i++] = nir_src_for_ssa(nir_imm_int(b, resource_index));
+         instr->src[i++] =
+            nir_src_for_ssa(ttn_channel(b, src[addr_src_index], X));
+      }
 
    } else if (file == TGSI_FILE_MEMORY) {
       nir_intrinsic_op op;

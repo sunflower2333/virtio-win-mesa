@@ -5371,16 +5371,38 @@ Shader_tgsi_translate(const unsigned *code,
 
          switch (opcode.type) {
          case DX10_SM5_OPCODE_IMM_ATOMIC_ALLOC:
-         case DX10_SM5_OPCODE_IMM_ATOMIC_CONSUME:
-            /*
-             * Do not lower UAV counter alloc/consume to native image atomics
-             * here without first reproducing the previous host-side hang.
-             * The hidden-counter-buffer ATOMUADD experiment wedged the host
-             * amdgpu gfx ring from virgl_render_server; the Wine repro is kept
-             * on the emulation path in Shader.cpp until that is diagnosed.
-             */
-            ureg_MOV(ureg, result, ureg_imm1u(ureg, 0));
+         case DX10_SM5_OPCODE_IMM_ATOMIC_CONSUME: {
+            if (image_index >= PIPE_MAX_SHADER_BUFFERS) {
+               YTTRIUM_WARN("yttrium: shader TGSI UAV counter slot unsupported owner=d3d10umd-shader slot=%u max=%u action=abort-translation\n",
+                            image_index, PIPE_MAX_SHADER_BUFFERS);
+               sx.translation_failed = true;
+               break;
+            }
+
+            const bool consume =
+               opcode.type == DX10_SM5_OPCODE_IMM_ATOMIC_CONSUME;
+            struct ureg_src counter =
+               ureg_DECL_buffer(ureg, image_index, true);
+            struct ureg_dst atomic_result =
+               consume ? ureg_DECL_temporary(ureg) : result;
+            struct ureg_src counter_src[3] = {
+               counter,
+               ureg_imm1u(ureg, 0),
+               ureg_imm1u(ureg, consume ? ~0u : 1u),
+            };
+
+            ureg_memory_insn(ureg, TGSI_OPCODE_ATOMUADD,
+                             &atomic_result, 1, counter_src,
+                             ARRAY_SIZE(counter_src), 0,
+                             TGSI_TEXTURE_BUFFER, PIPE_FORMAT_R32_UINT);
+            if (consume) {
+               ureg_UADD(ureg, result,
+                         ureg_scalar(ureg_src(atomic_result), TGSI_SWIZZLE_X),
+                         ureg_imm1u(ureg, ~0u));
+               ureg_release_temporary(ureg, atomic_result);
+            }
             break;
+         }
          case DX10_SM5_OPCODE_ATOMIC_AND:
          case DX10_SM5_OPCODE_IMM_ATOMIC_AND:
             tgsi_opcode = TGSI_OPCODE_ATOMAND;

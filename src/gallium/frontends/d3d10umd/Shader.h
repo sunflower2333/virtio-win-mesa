@@ -37,6 +37,7 @@
 
 struct Device;
 struct Shader;
+struct UnorderedAccessView;
 
 void *
 CreateEmptyShader(Device *pDevice,
@@ -300,6 +301,15 @@ void APIENTRY CreateUnorderedAccessView(
 void APIENTRY DestroyUnorderedAccessView(
    D3D10DDI_HDEVICE hDevice,
    D3D11DDI_HUNORDEREDACCESSVIEW hUnorderedAccessView);
+
+bool UpdateUnorderedAccessViewCounter(Device *pDevice,
+                                      UnorderedAccessView *uav,
+                                      UINT value);
+
+void BindUnorderedAccessViewCounters(Device *pDevice,
+                                     mesa_shader_stage stage,
+                                     UINT first_slot,
+                                     UINT num_slots);
 
 void APIENTRY ClearUnorderedAccessViewUint(
    D3D10DDI_HDEVICE hDevice,

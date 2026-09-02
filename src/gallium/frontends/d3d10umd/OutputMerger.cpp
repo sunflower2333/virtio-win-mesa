@@ -1256,6 +1256,9 @@ ClearGraphicsUnorderedAccessViews(Device *pDevice)
       memset(pDevice->shader_images[stage], 0,
              sizeof(pDevice->shader_images[stage]));
 
+      BindUnorderedAccessViewCounters(pDevice, stage, 0,
+                                      PIPE_MAX_SHADER_BUFFERS);
+
       pDevice->pipe->set_shader_images(pDevice->pipe, stage,
                                        0, 0, PIPE_MAX_SHADER_IMAGES, NULL);
       UpdateBufferInfoUavConstants(pDevice, stage, 0,
@@ -1391,7 +1394,8 @@ SetRenderTargets11(
          if (pUAVInitialCounts &&
              pUAVInitialCounts[i] != ~0u &&
              (uav->buffer_counter || uav->buffer_append))
-            uav->counter_value = pUAVInitialCounts[i];
+            UpdateUnorderedAccessViewCounter(pDevice, uav,
+                                             pUAVInitialCounts[i]);
          for (unsigned stage_idx = 0;
               stage_idx < ARRAY_SIZE(graphics_uav_stages);
               stage_idx++) {
@@ -1418,6 +1422,7 @@ SetRenderTargets11(
       const mesa_shader_stage stage = graphics_uav_stages[i];
       pipe->set_shader_images(pipe, stage, UAVStartSlot, NumUAVs, 0,
                               &pDevice->shader_images[stage][UAVStartSlot]);
+      BindUnorderedAccessViewCounters(pDevice, stage, UAVStartSlot, NumUAVs);
       UpdateBufferInfoUavConstants(pDevice, stage, UAVStartSlot, NumUAVs);
       UpdateBufferInfoConstants(pDevice, stage);
    }

@@ -509,6 +509,7 @@ struct UnorderedAccessView
 {
    struct list_head list;
    struct pipe_resource *pipe_resource;
+   struct pipe_resource *counter_resource;
    struct pipe_image_view image;
    enum pipe_format clear_format;
    Resource *resource;

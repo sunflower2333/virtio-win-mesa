@@ -501,6 +501,49 @@ WriteBufferRange(struct pipe_context *pipe, struct pipe_resource *resource,
    return true;
 }
 
+bool
+UpdateUnorderedAccessViewCounter(Device *pDevice,
+                                 UnorderedAccessView *uav,
+                                 UINT value)
+{
+   if (!pDevice || !pDevice->pipe || !uav || !uav->counter_resource)
+      return false;
+
+   if (!WriteBufferRange(pDevice->pipe, uav->counter_resource, 0,
+                         sizeof(value), &value))
+      return false;
+
+   uav->counter_value = value;
+   return true;
+}
+
+void
+BindUnorderedAccessViewCounters(Device *pDevice,
+                                mesa_shader_stage stage,
+                                UINT first_slot,
+                                UINT num_slots)
+{
+   if (!pDevice || !pDevice->pipe || !pDevice->pipe->set_shader_buffers ||
+       stage >= MESA_SHADER_STAGES || first_slot >= PIPE_MAX_SHADER_BUFFERS)
+      return;
+
+   struct pipe_context *pipe = pDevice->pipe;
+   const UINT end = MIN2(first_slot + num_slots, PIPE_MAX_SHADER_BUFFERS);
+   for (UINT slot = first_slot; slot < end; ++slot) {
+      UnorderedAccessView *uav =
+         pDevice->unordered_access_views[stage][slot];
+      struct pipe_shader_buffer counter = {};
+      if (uav && uav->counter_resource) {
+         counter.buffer = uav->counter_resource;
+         counter.buffer_size = sizeof(uav->counter_value);
+      }
+
+      pipe->set_shader_buffers(pipe, stage, slot, 1,
+                               counter.buffer ? &counter : NULL,
+                               counter.buffer ? 1 : 0);
+   }
+}
+
 static bool
 RunWineRawUAVAtomics(Device *pDevice, mesa_shader_stage stage,
                      bool write_original)
@@ -2598,7 +2641,10 @@ RunWineUAVCounterConsumeCompute(Device *pDevice, Shader *cs,
    if (src->buffer_stride > sizeof(data) || dst->buffer_stride > sizeof(data))
       return false;
 
-   unsigned counter = src->counter_value;
+   unsigned counter = 0;
+   if (!ReadBufferRange(pDevice->pipe, src->counter_resource, 0,
+                        sizeof(counter), &counter))
+      return false;
    for (unsigned i = 0; i < invocations && counter; ++i) {
       counter--;
       const unsigned src_offset =
@@ -2613,8 +2659,7 @@ RunWineUAVCounterConsumeCompute(Device *pDevice, Shader *cs,
          return false;
    }
 
-   src->counter_value = counter;
-   return true;
+   return UpdateUnorderedAccessViewCounter(pDevice, src, counter);
 }
 
 static bool
@@ -2639,7 +2684,10 @@ RunWineUAVCounterProduceCompute(Device *pDevice, Shader *cs,
    const unsigned invocations =
       ThreadGroupCountX * ThreadGroupCountY * ThreadGroupCountZ *
       block_x * block_y * block_z;
-   unsigned counter = uav->counter_value;
+   unsigned counter = 0;
+   if (!ReadBufferRange(pDevice->pipe, uav->counter_resource, 0,
+                        sizeof(counter), &counter))
+      return false;
    if (counter > uav->buffer_num_elements ||
        invocations > uav->buffer_num_elements - counter)
       return false;
@@ -2653,8 +2701,8 @@ RunWineUAVCounterProduceCompute(Device *pDevice, Shader *cs,
          return false;
    }
 
-   uav->counter_value = counter + invocations;
-   return true;
+   return UpdateUnorderedAccessViewCounter(pDevice, uav,
+                                           counter + invocations);
 }
 
 static bool
@@ -2676,7 +2724,10 @@ RunWineAppendDispatchArgsCompute(Device *pDevice)
        uav->buffer_stride != sizeof(dispatch_args[0]))
       return false;
 
-   unsigned counter = uav->counter_value;
+   unsigned counter = 0;
+   if (!ReadBufferRange(pDevice->pipe, uav->counter_resource, 0,
+                        sizeof(counter), &counter))
+      return false;
    if (counter > uav->buffer_num_elements ||
        ARRAY_SIZE(dispatch_args) > uav->buffer_num_elements - counter)
       return false;
@@ -2689,8 +2740,8 @@ RunWineAppendDispatchArgsCompute(Device *pDevice)
          return false;
    }
 
-   uav->counter_value = counter + ARRAY_SIZE(dispatch_args);
-   return true;
+   return UpdateUnorderedAccessViewCounter(
+      pDevice, uav, counter + ARRAY_SIZE(dispatch_args));
 }
 
 static bool
@@ -3579,11 +3630,22 @@ CopyStructureCount(D3D10DDI_HDEVICE hDevice,
    Resource *dst = CastResource(hDstBuffer);
    UnorderedAccessView *src = CastUnorderedAccessView(hSrcView);
    if (!pDevice || !pDevice->pipe || !dst || !dst->resource || !src ||
-       !src->pipe_resource || (!src->buffer_counter && !src->buffer_append))
+       !src->pipe_resource || !src->counter_resource ||
+       (!src->buffer_counter && !src->buffer_append) ||
+       dst->resource->target != PIPE_BUFFER || (DstAlignedByteOffset & 3) ||
+       DstAlignedByteOffset > dst->resource->width0 ||
+       sizeof(src->counter_value) >
+          dst->resource->width0 - DstAlignedByteOffset ||
+       !pDevice->pipe->resource_copy_region)
+      return;
+   if (!CheckPredicate(pDevice))
       return;
 
-   WriteBufferRange(pDevice->pipe, dst->resource, DstAlignedByteOffset,
-                    sizeof(src->counter_value), &src->counter_value);
+   struct pipe_box box;
+   u_box_1d(0, sizeof(src->counter_value), &box);
+   pDevice->pipe->resource_copy_region(
+      pDevice->pipe, dst->resource, 0, DstAlignedByteOffset, 0, 0,
+      src->counter_resource, 0, &box);
 }
 
 
@@ -4055,6 +4117,7 @@ CreateUnorderedAccessView(
    pUAView->buffer_num_elements = 0;
    pUAView->buffer_stride = 0;
    pUAView->counter_value = 0;
+   pUAView->counter_resource = NULL;
    pUAView->pipe_resource = NULL;
    pipe_resource_reference(&pUAView->pipe_resource,
                            CastPipeResource(pCreateUAView->hDrvResource));
@@ -4129,6 +4192,23 @@ CreateUnorderedAccessView(
       return;
    }
 
+   if (pUAView->buffer_counter || pUAView->buffer_append) {
+      Device *pDevice = CastDevice(hDevice);
+      pUAView->counter_resource =
+         pipe_buffer_create(pDevice->screen, PIPE_BIND_SHADER_BUFFER,
+                            PIPE_USAGE_DEFAULT,
+                            sizeof(pUAView->counter_value));
+      if (!pUAView->counter_resource ||
+          !UpdateUnorderedAccessViewCounter(pDevice, pUAView, 0)) {
+         pUAView->image.resource = NULL;
+         pipe_resource_reference(&pUAView->counter_resource, NULL);
+         pipe_resource_reference(&pUAView->pipe_resource, NULL);
+         pUAView->resource = NULL;
+         SetError(hDevice, E_OUTOFMEMORY);
+         return;
+      }
+   }
+
    list_addtail(&pUAView->list,
                 &CastDevice(hDevice)->unordered_access_view_objects);
 }
@@ -4147,6 +4227,7 @@ DestroyUnorderedAccessView(
 
    if (!list_is_empty(&pUAView->list))
       list_delinit(&pUAView->list);
+   pipe_resource_reference(&pUAView->counter_resource, NULL);
    pipe_resource_reference(&pUAView->pipe_resource, NULL);
    pUAView->resource = NULL;
 }
@@ -4462,7 +4543,8 @@ CsSetUnorderedAccessViews(
          if (pUAVInitialCounts &&
              pUAVInitialCounts[i] != ~0u &&
              (uav->buffer_counter || uav->buffer_append))
-            uav->counter_value = pUAVInitialCounts[i];
+            UpdateUnorderedAccessViewCounter(pDevice, uav,
+                                             pUAVInitialCounts[i]);
          pDevice->unordered_access_views[MESA_SHADER_COMPUTE][StartSlot + i] =
             uav;
          pDevice->shader_images[MESA_SHADER_COMPUTE][StartSlot + i] =
@@ -4477,6 +4559,8 @@ CsSetUnorderedAccessViews(
 
    pipe->set_shader_images(pipe, MESA_SHADER_COMPUTE, StartSlot, NumViews, 0,
                            &pDevice->shader_images[MESA_SHADER_COMPUTE][StartSlot]);
+   BindUnorderedAccessViewCounters(pDevice, MESA_SHADER_COMPUTE,
+                                   StartSlot, NumViews);
    UpdateBufferInfoUavConstants(pDevice, MESA_SHADER_COMPUTE,
                                 StartSlot, NumViews);
    UpdateBufferInfoConstants(pDevice, MESA_SHADER_COMPUTE);
