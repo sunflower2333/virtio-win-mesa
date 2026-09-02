@@ -37,11 +37,13 @@ def function_body(text: str, signature: str, source: Path) -> str:
 query = ROOT / "src/gallium/frontends/d3d10umd/Query.cpp"
 resource = ROOT / "src/gallium/frontends/d3d10umd/Resource.cpp"
 shader = ROOT / "src/gallium/frontends/d3d10umd/Shader.cpp"
+zink_draw = ROOT / "src/gallium/drivers/zink/zink_draw.cpp"
 workflow = ROOT / ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 
 query_text = query.read_text(encoding="utf-8")
 resource_text = resource.read_text(encoding="utf-8")
 shader_text = shader.read_text(encoding="utf-8")
+zink_draw_text = zink_draw.read_text(encoding="utf-8")
 workflow_text = workflow.read_text(encoding="utf-8")
 
 set_predication = function_body(
@@ -111,6 +113,54 @@ for text, source, signature in (
 ):
     body = function_body(text, signature, source)
     require(body, "if (!CheckPredicate(pDevice))", source)
+
+emulation_predicate_guard = (
+    "if (!CheckPredicate(pDevice)) {\n"
+    "      return true;\n"
+    "   }"
+)
+for signature in (
+    "RunComputeEmulation(Device *pDevice,",
+    "RunPixelShaderEmulation(Device *pDevice)",
+):
+    body = function_body(shader_text, signature, shader)
+    emulation_type = body.find("COMPUTE_EMULATION_NONE")
+    predicate_guard = body.find(emulation_predicate_guard)
+    fallback_warning = body.find("WarnSoftwareEmulationFallback(")
+    if min(emulation_type, predicate_guard, fallback_warning) < 0:
+        raise AssertionError(f"incomplete predicated emulation path in {signature!r}")
+    if not emulation_type < predicate_guard < fallback_warning:
+        raise AssertionError(f"invalid predicated emulation ordering in {signature!r}")
+
+dispatch = function_body(shader_text, "Dispatch(D3D10DDI_HDEVICE hDevice,", shader)
+dispatch_indirect = function_body(
+    shader_text,
+    "DispatchIndirect(D3D10DDI_HDEVICE hDevice,",
+    shader,
+)
+for body, source_name in (
+    (dispatch, "Dispatch"),
+    (dispatch_indirect, "DispatchIndirect"),
+):
+    if "CheckPredicate(pDevice)" in body:
+        raise AssertionError(f"{source_name} blocks native backend predication")
+require(dispatch, "RunComputeEmulation(pDevice, cs", shader)
+require(dispatch, "pipe->launch_grid(pipe, &info)", shader)
+require(dispatch_indirect, "Dispatch(hDevice, dispatch_args.ThreadGroupCountX", shader)
+require(dispatch_indirect, "pipe->launch_grid(pipe, &info)", shader)
+
+zink_launch_grid = function_body(
+    zink_draw_text,
+    "zink_launch_grid(struct pipe_context *pctx",
+    zink_draw,
+)
+conditional_start = zink_launch_grid.find("zink_start_conditional_render(ctx)")
+indirect_submit = zink_launch_grid.find("CmdDispatchIndirect")
+direct_submit = zink_launch_grid.find("CmdDispatch)", indirect_submit)
+if min(conditional_start, indirect_submit, direct_submit) < 0:
+    raise AssertionError("Zink native dispatch conditioning is incomplete")
+if not conditional_start < indirect_submit < direct_submit:
+    raise AssertionError("Zink native dispatch conditioning order is invalid")
 
 require(workflow_text, "check_predication_contract.py", workflow)
 

@@ -897,6 +897,10 @@ RunComputeEmulation(Device *pDevice,
    if (!pDevice || !cs || cs->compute_emulation == COMPUTE_EMULATION_NONE)
       return false;
 
+   if (!CheckPredicate(pDevice)) {
+      return true;
+   }
+
    char details[128];
    snprintf(details, sizeof(details),
             "dispatch=%ux%ux%u tg_size=%ux%ux%u",
@@ -2744,6 +2748,10 @@ RunPixelShaderEmulation(Device *pDevice)
 
    if (!ps || ps->compute_emulation == COMPUTE_EMULATION_NONE)
       return false;
+
+   if (!CheckPredicate(pDevice)) {
+      return true;
+   }
 
    char details[128];
    snprintf(details, sizeof(details), "viewport=%ux%u",
