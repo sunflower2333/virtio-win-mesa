@@ -135,22 +135,38 @@ UnregisterResource(Device *device, Resource *resource, const char *reason,
 }
 
 static void
+InvalidateBufferShadow(Resource *resource)
+{
+   if (!resource)
+      return;
+
+   free(resource->buffer_shadow);
+   resource->buffer_shadow = NULL;
+   resource->buffer_shadow_size = 0;
+   resource->constant_shadow_valid = false;
+}
+
+static bool
 UpdateBufferShadow(Resource *resource,
                    unsigned offset,
                    unsigned size,
                    const void *data)
 {
    if (!resource || !resource->buffer || !size || !data)
-      return;
+      return false;
 
-   if (offset > UINT_MAX - size)
-      return;
+   if (offset > UINT_MAX - size) {
+      InvalidateBufferShadow(resource);
+      return false;
+   }
 
    const unsigned required_size = offset + size;
    if (required_size > resource->buffer_shadow_size) {
       void *shadow = realloc(resource->buffer_shadow, required_size);
-      if (!shadow)
-         return;
+      if (!shadow) {
+         InvalidateBufferShadow(resource);
+         return false;
+      }
 
       memset((uint8_t *)shadow + resource->buffer_shadow_size, 0,
              required_size - resource->buffer_shadow_size);
@@ -159,6 +175,7 @@ UpdateBufferShadow(Resource *resource,
    }
 
    memcpy((uint8_t *)resource->buffer_shadow + offset, data, size);
+   return true;
 }
 
 static bool
@@ -171,8 +188,10 @@ EnsureBufferShadow(Resource *resource, unsigned size)
       return true;
 
    void *shadow = realloc(resource->buffer_shadow, size);
-   if (!shadow)
+   if (!shadow) {
+      InvalidateBufferShadow(resource);
       return false;
+   }
 
    memset((uint8_t *)shadow + resource->buffer_shadow_size, 0,
           size - resource->buffer_shadow_size);
@@ -1238,10 +1257,12 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
             goto create_failure;
          }
          memcpy(map, pInitialDataUP->pSysMem, box.width);
-         UpdateBufferShadow(pResource, box.x, box.width,
-                            pInitialDataUP->pSysMem);
+         const bool shadow_updated =
+            UpdateBufferShadow(pResource, box.x, box.width,
+                               pInitialDataUP->pSysMem);
          pResource->constant_shadow_valid =
-            box.x == 0 && box.width == pResource->resource->width0;
+            shadow_updated && box.x == 0 &&
+            box.width == pResource->resource->width0;
          pipe_buffer_unmap(pipe, transfer);
       } else {
          for (UINT SubResource = 0; SubResource < pResource->NumSubResources; ++SubResource) {
@@ -2163,8 +2184,10 @@ ResourceUpdateSubResourceUP(D3D10DDI_HDEVICE hDevice,                // IN
                            box.x,
                            box.width,
                            pSysMemUP);
-      UpdateBufferShadow(pDstResource, box.x, box.width, pSysMemUP);
+      const bool shadow_updated =
+         UpdateBufferShadow(pDstResource, box.x, box.width, pSysMemUP);
       if (ConstantBufferPublicationCandidate(pDevice, pDstResource) &&
+          shadow_updated &&
           EnsureBufferShadow(pDstResource, dst_resource->width0)) {
          pDstResource->constant_shadow_valid =
             (box.x == 0 && box.width == dst_resource->width0) ||

@@ -206,6 +206,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_resource_creation_failures.py
 
+      - name: Verify buffer shadow failure contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_buffer_shadow_failure.py
+
       - name: Verify resource open failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_resource_open_failures.py
