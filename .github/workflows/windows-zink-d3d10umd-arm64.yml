@@ -151,6 +151,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_format_support_errors.py
 
+      - name: Verify resource copy-region empty-box contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_resource_copy_region_empty_box.py
+
       - name: Verify UAV creation failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_uav_creation_failure.py

@@ -1887,6 +1887,13 @@ ResourceCopyRegion(D3D10DDI_HDEVICE hDevice,                // IN
       return;
    }
 
+   if (pSrcBox &&
+       (pSrcBox->left >= pSrcBox->right ||
+        pSrcBox->top >= pSrcBox->bottom ||
+        pSrcBox->front >= pSrcBox->back)) {
+      return;
+   }
+
    struct pipe_context *pipe = pDevice->pipe;
    Resource *pDstResource = CastResource(hDstResource);
    Resource *pSrcResource = CastResource(hSrcResource);
