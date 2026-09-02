@@ -4388,11 +4388,14 @@ ClearUnorderedAccessViewUint(
 {
    LOG_ENTRYPOINT();
 
-   struct pipe_context *pipe = CastPipeContext(hDevice);
+   Device *pDevice = CastDevice(hDevice);
    UnorderedAccessView *uav = CastUnorderedAccessView(hUnorderedAccessView);
-   if (!pipe || !uav || !uav->pipe_resource || !Values)
+   if (!pDevice || !pDevice->pipe || !uav || !uav->pipe_resource || !Values)
+      return;
+   if (!CheckPredicate(pDevice))
       return;
 
+   struct pipe_context *pipe = pDevice->pipe;
    if (uav->pipe_resource->target == PIPE_BUFFER) {
       uint8_t pattern[16];
       unsigned pattern_size = 0;
@@ -4414,11 +4417,14 @@ ClearUnorderedAccessViewFloat(
 {
    LOG_ENTRYPOINT();
 
-   struct pipe_context *pipe = CastPipeContext(hDevice);
+   Device *pDevice = CastDevice(hDevice);
    UnorderedAccessView *uav = CastUnorderedAccessView(hUnorderedAccessView);
-   if (!pipe || !uav || !uav->pipe_resource || !Values)
+   if (!pDevice || !pDevice->pipe || !uav || !uav->pipe_resource || !Values)
+      return;
+   if (!CheckPredicate(pDevice))
       return;
 
+   struct pipe_context *pipe = pDevice->pipe;
    if (uav->pipe_resource->target == PIPE_BUFFER) {
       uint8_t pattern[16];
       unsigned pattern_size = 0;

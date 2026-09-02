@@ -37,12 +37,14 @@ def function_body(text: str, signature: str, source: Path) -> str:
 query = ROOT / "src/gallium/frontends/d3d10umd/Query.cpp"
 resource = ROOT / "src/gallium/frontends/d3d10umd/Resource.cpp"
 shader = ROOT / "src/gallium/frontends/d3d10umd/Shader.cpp"
+output_merger = ROOT / "src/gallium/frontends/d3d10umd/OutputMerger.cpp"
 zink_draw = ROOT / "src/gallium/drivers/zink/zink_draw.cpp"
 workflow = ROOT / ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 
 query_text = query.read_text(encoding="utf-8")
 resource_text = resource.read_text(encoding="utf-8")
 shader_text = shader.read_text(encoding="utf-8")
+output_merger_text = output_merger.read_text(encoding="utf-8")
 zink_draw_text = zink_draw.read_text(encoding="utf-8")
 workflow_text = workflow.read_text(encoding="utf-8")
 
@@ -131,6 +133,41 @@ for signature in (
         raise AssertionError(f"incomplete predicated emulation path in {signature!r}")
     if not emulation_type < predicate_guard < fallback_warning:
         raise AssertionError(f"invalid predicated emulation ordering in {signature!r}")
+
+for signature in (
+    "ClearUnorderedAccessViewUint(\n",
+    "ClearUnorderedAccessViewFloat(\n",
+):
+    body = function_body(shader_text, signature, shader)
+    device = body.find("Device *pDevice = CastDevice(hDevice);")
+    validation = body.find("if (!pDevice || !pDevice->pipe || !uav ||")
+    predicate_guard = body.find("if (!CheckPredicate(pDevice))")
+    pipe = body.find("struct pipe_context *pipe = pDevice->pipe;")
+    clear = body.find("uav->pipe_resource->target == PIPE_BUFFER")
+    if min(device, validation, predicate_guard, pipe, clear) < 0:
+        raise AssertionError(f"incomplete predicated UAV clear in {signature!r}")
+    if not device < validation < predicate_guard < pipe < clear:
+        raise AssertionError(f"invalid predicated UAV clear ordering in {signature!r}")
+
+clear_view = function_body(
+    output_merger_text,
+    "ClearView(D3D10DDI_HDEVICE hDevice,",
+    output_merger,
+)
+if "CheckPredicate(pDevice)" in clear_view:
+    raise AssertionError("ClearView blocks backend GPU predication")
+device = clear_view.find("Device *pDevice = CastDevice(hDevice);")
+predicate_gate = clear_view.find("if (!pDevice->pPredicate &&")
+upload = clear_view.find("ClearRenderTargetViewRectUpload(", predicate_gate)
+skip = clear_view.find("continue;", upload)
+conditioned_clear = clear_view.find("pipe->clear_render_target", skip)
+if min(device, predicate_gate, upload, skip, conditioned_clear) < 0:
+    raise AssertionError("ClearView predicated upload bypass is incomplete")
+if not device < predicate_gate < upload < skip < conditioned_clear:
+    raise AssertionError("ClearView predicated upload bypass ordering is invalid")
+conditioned_clear_end = clear_view.find(");", conditioned_clear)
+if "true" not in clear_view[conditioned_clear:conditioned_clear_end]:
+    raise AssertionError("ClearView fallback clear disables backend predication")
 
 dispatch = function_body(shader_text, "Dispatch(D3D10DDI_HDEVICE hDevice,", shader)
 dispatch_indirect = function_body(

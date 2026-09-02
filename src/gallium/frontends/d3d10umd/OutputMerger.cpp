@@ -516,7 +516,8 @@ ClearView(D3D10DDI_HDEVICE hDevice,
    D3D10DDI_HRENDERTARGETVIEW hRenderTargetView;
    hRenderTargetView.pDrvPrivate = hView;
 
-   struct pipe_context *pipe = CastPipeContext(hDevice);
+   Device *pDevice = CastDevice(hDevice);
+   struct pipe_context *pipe = pDevice ? pDevice->pipe : NULL;
    struct pipe_surface *surface = GetPipeRenderTargetView(hRenderTargetView);
    if (!pipe || !surface)
       return;
@@ -551,13 +552,15 @@ ClearView(D3D10DDI_HDEVICE hDevice,
          continue;
       }
 
-      if (!ClearRenderTargetViewRectUpload(pipe, surface, &clear_color,
-                                           (unsigned)left, (unsigned)top,
-                                           width, height)) {
-         pipe->clear_render_target(pipe, surface, &clear_color,
-                                   (unsigned)left, (unsigned)top,
-                                   width, height, true);
-      }
+      if (!pDevice->pPredicate &&
+          ClearRenderTargetViewRectUpload(pipe, surface, &clear_color,
+                                          (unsigned)left, (unsigned)top,
+                                          width, height))
+         continue;
+
+      pipe->clear_render_target(pipe, surface, &clear_color,
+                                (unsigned)left, (unsigned)top,
+                                width, height, true);
    }
 }
 
