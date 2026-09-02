@@ -169,6 +169,23 @@ conditioned_clear_end = clear_view.find(");", conditioned_clear)
 if "true" not in clear_view[conditioned_clear:conditioned_clear_end]:
     raise AssertionError("ClearView fallback clear disables backend predication")
 
+resolve = function_body(
+    resource_text,
+    "ResourceResolveSubResource(D3D10DDI_HDEVICE hDevice,",
+    resource,
+)
+if "CheckPredicate" in resolve:
+    raise AssertionError("resource resolve blocks backend GPU predication")
+valid_resolve = resolve.find("if (pipe->blit &&")
+blit_info = resolve.find("struct pipe_blit_info info = {};", valid_resolve)
+condition_enable = resolve.find("info.render_condition_enable = true;", blit_info)
+blit_submit = resolve.find("pipe->blit(pipe, &info);", blit_info)
+copy_fallback = resolve.find("pipe->resource_copy_region", blit_submit)
+if min(valid_resolve, blit_info, condition_enable, blit_submit, copy_fallback) < 0:
+    raise AssertionError("resource resolve predication is incomplete")
+if not valid_resolve < blit_info < condition_enable < blit_submit < copy_fallback:
+    raise AssertionError("resource resolve predication ordering is invalid")
+
 dispatch = function_body(shader_text, "Dispatch(D3D10DDI_HDEVICE hDevice,", shader)
 dispatch_indirect = function_body(
     shader_text,

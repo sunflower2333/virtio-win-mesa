@@ -2006,6 +2006,7 @@ ResourceResolveSubResource(D3D10DDI_HDEVICE hDevice,        // IN
          info.src.box.z = src_layer;
          info.mask = util_format_get_mask(resolve_format);
          info.filter = PIPE_TEX_FILTER_NEAREST;
+         info.render_condition_enable = true;
          pipe->blit(pipe, &info);
          return;
       }
