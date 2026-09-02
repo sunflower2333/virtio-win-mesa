@@ -159,6 +159,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_uav_creation_failure.py
 
+      - name: Verify UAV buffer Float clear contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_uav_buffer_float_clear.py
+
       - name: Verify shader resource view creation failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_shader_resource_view_creation_failure.py

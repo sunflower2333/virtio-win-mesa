@@ -4189,14 +4189,21 @@ PackUAVClearFloat(enum pipe_format format,
 
 static void
 FillUAVBufferClear(struct pipe_context *pipe,
-                   struct pipe_resource *resource,
-                   unsigned offset,
-                   unsigned size,
+                   UnorderedAccessView *uav,
                    const uint8_t *pattern,
                    unsigned pattern_size)
 {
-   if (!pipe || !resource || !pattern || !pattern_size || !size)
+   if (!pipe || !uav || !uav->pipe_resource ||
+       uav->pipe_resource->target != PIPE_BUFFER || !pattern || !pattern_size)
       return;
+
+   struct pipe_resource *resource = uav->pipe_resource;
+   unsigned offset = uav->image.u.buf.offset;
+   unsigned size = uav->image.u.buf.size;
+   if (offset >= resource->width0)
+      return;
+   if (!size || size > resource->width0 - offset)
+      size = resource->width0 - offset;
 
    if (pipe->buffer_subdata) {
       uint8_t *data = (uint8_t *)MALLOC(size);
@@ -4350,15 +4357,7 @@ ClearUnorderedAccessViewUint(
                             pattern, &pattern_size))
          return;
 
-      unsigned offset = uav->image.u.buf.offset;
-      unsigned size = uav->image.u.buf.size;
-      if (offset >= uav->pipe_resource->width0)
-         return;
-      if (!size || size > uav->pipe_resource->width0 - offset)
-         size = uav->pipe_resource->width0 - offset;
-
-      FillUAVBufferClear(pipe, uav->pipe_resource, offset, size,
-                         pattern, pattern_size);
+      FillUAVBufferClear(pipe, uav, pattern, pattern_size);
    } else {
       ClearUAVTextureUint(pipe, uav, Values);
    }
@@ -4377,8 +4376,17 @@ ClearUnorderedAccessViewFloat(
    if (!pipe || !uav || !uav->pipe_resource || !Values)
       return;
 
-   if (uav->pipe_resource->target != PIPE_BUFFER)
+   if (uav->pipe_resource->target == PIPE_BUFFER) {
+      uint8_t pattern[16];
+      unsigned pattern_size = 0;
+      if (!PackUAVClearFloat(uav->clear_format, Values,
+                             pattern, &pattern_size))
+         return;
+
+      FillUAVBufferClear(pipe, uav, pattern, pattern_size);
+   } else {
       ClearUAVTextureFloat(pipe, uav, Values);
+   }
 }
 
 void APIENTRY
