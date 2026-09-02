@@ -60,6 +60,64 @@ fail(const char *operation, HRESULT result)
 }
 
 bool
+validate_cyan_frame(ID3D11DeviceContext *context,
+                    ID3D11Texture2D *staging,
+                    ID3D11Texture2D *render_target,
+                    const char *stage)
+{
+   context->CopyResource(staging, render_target);
+
+   D3D11_MAPPED_SUBRESOURCE mapped = {};
+   HRESULT result = context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
+   if (FAILED(result)) {
+      fprintf(stderr, "%s Map(staging) failed: 0x%08lx\n", stage,
+              static_cast<unsigned long>(result));
+      return false;
+   }
+   if (mapped.RowPitch < kWidth * 4) {
+      context->Unmap(staging, 0);
+      fprintf(stderr, "%s invalid staging row pitch: %u\n", stage,
+              mapped.RowPitch);
+      return false;
+   }
+
+   uint64_t checksum = 0;
+   UINT invalid_x = kWidth;
+   UINT invalid_y = kHeight;
+   const uint8_t *data = static_cast<const uint8_t *>(mapped.pData);
+   for (UINT y = 0; y < kHeight; ++y) {
+      const uint8_t *row = data + static_cast<size_t>(y) * mapped.RowPitch;
+      for (UINT x = 0; x < kWidth; ++x) {
+         const uint8_t *pixel = row + static_cast<size_t>(x) * 4;
+         checksum += pixel[0] + pixel[1] + pixel[2] + pixel[3];
+         if (invalid_x == kWidth &&
+             (pixel[0] != 0 || pixel[1] != 255 || pixel[2] != 255 ||
+              pixel[3] != 255)) {
+            invalid_x = x;
+            invalid_y = y;
+         }
+      }
+   }
+   context->Unmap(staging, 0);
+
+   if (invalid_x != kWidth) {
+      fprintf(stderr, "%s unexpected pixel at (%u, %u)\n", stage, invalid_x,
+              invalid_y);
+      return false;
+   }
+   if (checksum != kExpectedChecksum) {
+      fprintf(stderr, "%s checksum mismatch: expected %llu, got %llu\n", stage,
+              static_cast<unsigned long long>(kExpectedChecksum),
+              static_cast<unsigned long long>(checksum));
+      return false;
+   }
+
+   printf("%s readback: PASS checksum=%llu\n", stage,
+          static_cast<unsigned long long>(checksum));
+   return true;
+}
+
+bool
 set_environment(const wchar_t *name, const wchar_t *value)
 {
    if (SetEnvironmentVariableW(name, value))
@@ -161,6 +219,28 @@ main()
    if (FAILED(result))
       return fail("CreateBuffer(vertex)", result);
 
+   const D3D11_DRAW_INSTANCED_INDIRECT_ARGS indirect_args = {
+      ARRAYSIZE(kFullscreenTriangle),
+      1,
+      0,
+      0,
+   };
+   static_assert(sizeof(indirect_args) == 16);
+
+   D3D11_BUFFER_DESC indirect_desc = {};
+   indirect_desc.ByteWidth = static_cast<UINT>(sizeof(indirect_args));
+   indirect_desc.Usage = D3D11_USAGE_IMMUTABLE;
+   indirect_desc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
+
+   D3D11_SUBRESOURCE_DATA indirect_data = {};
+   indirect_data.pSysMem = &indirect_args;
+
+   ComPtr<ID3D11Buffer> indirect_buffer;
+   result = device->CreateBuffer(&indirect_desc, &indirect_data,
+                                 &indirect_buffer);
+   if (FAILED(result))
+      return fail("CreateBuffer(indirect arguments)", result);
+
    D3D11_VIEWPORT viewport = {};
    viewport.Width = static_cast<FLOAT>(kWidth);
    viewport.Height = static_cast<FLOAT>(kHeight);
@@ -187,50 +267,18 @@ main()
    if (FAILED(result))
       return fail("CreateTexture2D(staging)", result);
 
-   context->CopyResource(staging.Get(), render_target.Get());
-
-   D3D11_MAPPED_SUBRESOURCE mapped = {};
-   result = context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
-   if (FAILED(result))
-      return fail("Map(staging)", result);
-   if (mapped.RowPitch < kWidth * 4) {
-      context->Unmap(staging.Get(), 0);
-      fprintf(stderr, "invalid staging row pitch: %u\n", mapped.RowPitch);
+   if (!validate_cyan_frame(context.Get(), staging.Get(), render_target.Get(),
+                            "direct draw"))
       return EXIT_FAILURE;
-   }
 
-   uint64_t checksum = 0;
-   UINT invalid_x = kWidth;
-   UINT invalid_y = kHeight;
-   const uint8_t *data = static_cast<const uint8_t *>(mapped.pData);
-   for (UINT y = 0; y < kHeight; ++y) {
-      const uint8_t *row = data + static_cast<size_t>(y) * mapped.RowPitch;
-      for (UINT x = 0; x < kWidth; ++x) {
-         const uint8_t *pixel = row + static_cast<size_t>(x) * 4;
-         checksum += pixel[0] + pixel[1] + pixel[2] + pixel[3];
-         if (invalid_x == kWidth &&
-             (pixel[0] != 0 || pixel[1] != 255 || pixel[2] != 255 ||
-              pixel[3] != 255)) {
-            invalid_x = x;
-            invalid_y = y;
-         }
-      }
-   }
-   context->Unmap(staging.Get(), 0);
-
-   if (invalid_x != kWidth) {
-      fprintf(stderr, "unexpected pixel at (%u, %u)\n", invalid_x, invalid_y);
+   context->ClearRenderTargetView(render_target_view.Get(), red);
+   context->DrawInstancedIndirect(indirect_buffer.Get(), 0);
+   if (!validate_cyan_frame(context.Get(), staging.Get(), render_target.Get(),
+                            "indirect draw"))
       return EXIT_FAILURE;
-   }
-   if (checksum != kExpectedChecksum) {
-      fprintf(stderr, "checksum mismatch: expected %llu, got %llu\n",
-              static_cast<unsigned long long>(kExpectedChecksum),
-              static_cast<unsigned long long>(checksum));
-      return EXIT_FAILURE;
-   }
 
-   printf("Zink D3D11 offscreen draw probe: PASS feature_level=0x%x checksum=%llu\n",
-          static_cast<unsigned>(feature_level),
-          static_cast<unsigned long long>(checksum));
+   printf("Zink D3D11 offscreen direct/indirect draw probe: PASS "
+          "feature_level=0x%x\n",
+          static_cast<unsigned>(feature_level));
    return EXIT_SUCCESS;
 }

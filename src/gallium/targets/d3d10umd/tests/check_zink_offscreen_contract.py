@@ -100,6 +100,21 @@ require(probe_text, "RSSetViewports", probe)
 require(probe_text, "VSSetShader", probe)
 require(probe_text, "PSSetShader", probe)
 require(probe_text, "Draw(ARRAYSIZE(kFullscreenTriangle), 0)", probe)
+require(probe_text, "D3D11_DRAW_INSTANCED_INDIRECT_ARGS indirect_args", probe)
+require(probe_text, "static_assert(sizeof(indirect_args) == 16)", probe)
+require(
+    probe_text,
+    "indirect_desc.ByteWidth = static_cast<UINT>(sizeof(indirect_args))",
+    probe,
+)
+require(probe_text, "indirect_desc.Usage = D3D11_USAGE_IMMUTABLE", probe)
+require(
+    probe_text,
+    "indirect_desc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS",
+    probe,
+)
+require(probe_text, "CreateBuffer(&indirect_desc, &indirect_data", probe)
+require(probe_text, "DrawInstancedIndirect(indirect_buffer.Get(), 0)", probe)
 require(probe_text, "CopyResource", probe)
 require(probe_text, "D3D11_MAP_READ", probe)
 require(probe_text, "pixel[0] != 0 || pixel[1] != 255 || pixel[2] != 255", probe)
@@ -129,6 +144,18 @@ for forbidden in (
     if forbidden in probe_text:
         raise AssertionError(f"offscreen probe contains forbidden {forbidden!r}")
 
+validation_start = probe_text.index("validate_cyan_frame(ID3D11DeviceContext")
+validation_end = probe_text.index("\n}\n\nbool\nset_environment", validation_start)
+validation_body = probe_text[validation_start:validation_end]
+for fragment in (
+    "CopyResource(staging, render_target)",
+    "Map(staging, 0, D3D11_MAP_READ",
+    "Unmap(staging, 0)",
+):
+    require(validation_body, fragment, probe)
+
+main_start = probe_text.index("\nint\nmain()", validation_end)
+main_body = probe_text[main_start:]
 draw_order = (
     "OMSetRenderTargets",
     "ClearRenderTargetView",
@@ -143,12 +170,16 @@ draw_order = (
     "VSSetShader",
     "PSSetShader",
     "Draw(ARRAYSIZE(kFullscreenTriangle), 0)",
-    "CopyResource",
-    "Map(staging.Get()",
+    '"direct draw"',
+    "ClearRenderTargetView",
+    "DrawInstancedIndirect(indirect_buffer.Get(), 0)",
+    '"indirect draw"',
 )
-draw_positions = [probe_text.index(fragment) for fragment in draw_order]
-if draw_positions != sorted(draw_positions):
-    raise AssertionError("offscreen shader draw/readback order is invalid")
+draw_position = 0
+for fragment in draw_order:
+    draw_position = main_body.index(fragment, draw_position) + len(fragment)
+if main_body.count("validate_cyan_frame(context.Get()") != 2:
+    raise AssertionError("direct and indirect draws need independent readback checks")
 
 guard = resource_text.index(
     "whandle->type == WINSYS_HANDLE_TYPE_D3DKMT_ALLOC"

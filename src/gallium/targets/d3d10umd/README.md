@@ -68,9 +68,12 @@ pass.
 The `zink_d3d11_offscreen.exe` probe loads `viogpud3d-zink.dll` from its
 application directory, clears a 64x64 RGBA8 render target to red, then creates
 SM4 vertex and pixel shaders and draws an opaque cyan fullscreen triangle. It
-copies the completed target to a staging texture and validates every mapped
-pixel plus checksum `3133440`. It creates no window or swap chain, does not
-compile shaders at runtime, and does not call DXGI Present.
+validates the direct draw through a staging readback, clears the target back to
+red, then repeats the draw with `DrawInstancedIndirect` from an immutable
+`D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS` buffer and independently validates the
+second readback. Each stage checks every mapped pixel plus checksum `3133440`.
+The probe creates no window or swap chain, does not compile shaders at runtime,
+and does not call DXGI Present.
 
 ## Yttrium configuration
 
