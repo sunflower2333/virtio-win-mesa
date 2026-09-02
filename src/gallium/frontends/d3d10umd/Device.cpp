@@ -68,6 +68,10 @@ static void APIENTRY CheckMultisampleQualityLevels(D3D10DDI_HDEVICE hDevice,
                                           DXGI_FORMAT Format,
                                           UINT SampleCount,
                                           __out UINT *pNumQualityLevels);
+static bool ValidateMultisampleQualityLevelsQuery(
+   D3D10DDI_HDEVICE hDevice,
+   DXGI_FORMAT Format,
+   UINT *pNumQualityLevels);
 static void APIENTRY SetTextFilterSize(D3D10DDI_HDEVICE hDevice, UINT Width, UINT Height);
 static bool IsYttriumMsaaDepthStencilLoadOnlyFormat(DXGI_FORMAT format);
 static bool IsYttriumMsaaFormatSupported(struct pipe_screen *screen,
@@ -183,22 +187,19 @@ CheckMultisampleQualityLevelsWDDM1_3(D3D10DDI_HDEVICE hDevice,
                                      UINT Flags,
                                      __out UINT *pNumQualityLevels)
 {
-   if (Flags) {
-      *pNumQualityLevels = 0;
-      if ((Flags == D3D10_1_DDIARG_STANDARD_MULTISAMPLE_PATTERN ||
-           Flags == D3D10_1_DDIARG_CENTER_MULTISAMPLE_PATTERN)) {
-         Device *device = CastDevice(hDevice);
-         if (device &&
-             device->pipe &&
-             !IsYttriumMsaaDepthStencilLoadOnlyFormat(Format) &&
-             IsYttriumMsaaFormatSupported(device->pipe->screen, Format, SampleCount))
-            *pNumQualityLevels = 1;
-      }
-
+   if (!Flags) {
+      CheckMultisampleQualityLevels(hDevice, Format, SampleCount,
+                                    pNumQualityLevels);
       return;
    }
 
-   CheckMultisampleQualityLevels(hDevice, Format, SampleCount, pNumQualityLevels);
+   /* Tiled-resource MSAA is unadvertised; one sample still has one quality. */
+   if (!ValidateMultisampleQualityLevelsQuery(hDevice, Format,
+                                              pNumQualityLevels))
+      return;
+
+   if (SampleCount == 1)
+      *pNumQualityLevels = 1;
 }
 
 static void APIENTRY
@@ -1561,6 +1562,25 @@ IsDefinedDxgiFormat(DXGI_FORMAT format)
 }
 
 static bool
+ValidateMultisampleQualityLevelsQuery(D3D10DDI_HDEVICE hDevice,
+                                      DXGI_FORMAT Format,
+                                      UINT *pNumQualityLevels)
+{
+   if (!pNumQualityLevels) {
+      SetError(hDevice, E_INVALIDARG);
+      return false;
+   }
+
+   *pNumQualityLevels = 0;
+   if (!IsDefinedDxgiFormat(Format)) {
+      SetError(hDevice, E_INVALIDARG);
+      return false;
+   }
+
+   return true;
+}
+
+static bool
 IsNotSupportedDxgiFormat(DXGI_FORMAT format)
 {
    switch (format) {
@@ -1976,7 +1996,14 @@ CheckMultisampleQualityLevels(D3D10DDI_HDEVICE hDevice,        // IN
                               UINT SampleCount,                // IN
                               __out UINT *pNumQualityLevels)   // OUT
 {
-   *pNumQualityLevels = 0;
+   if (!ValidateMultisampleQualityLevelsQuery(hDevice, Format,
+                                              pNumQualityLevels))
+      return;
+
+   if (SampleCount == 1) {
+      *pNumQualityLevels = 1;
+      return;
+   }
 
    if (!IsYttriumMsaaFormat(Format) ||
        IsYttriumMsaaDepthStencilLoadOnlyFormat(Format) ||
