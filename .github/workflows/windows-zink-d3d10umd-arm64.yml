@@ -218,6 +218,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_stream_output_resolution.py
 
+      - name: Verify stream-output target failure contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_stream_output_target_failure.py
+
       - name: Verify tessellation shader creation failure contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_tessellation_shader_creation_failures.py

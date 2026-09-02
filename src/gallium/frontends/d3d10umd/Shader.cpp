@@ -2402,14 +2402,23 @@ SoSetTargets(D3D10DDI_HDEVICE hDevice,                                     // IN
 
    Device *pDevice = CastDevice(hDevice);
    struct pipe_context *pipe = pDevice->pipe;
+   struct pipe_stream_output_target *candidate_targets[PIPE_MAX_SO_BUFFERS] = {};
+   Resource *candidate_resources[PIPE_MAX_SO_BUFFERS] = {};
+   bool allocation_failed = false;
 
    assert(SOTargets + ClearTargets <= PIPE_MAX_SO_BUFFERS);
+
+   if (!pipe->set_stream_output_targets) {
+      LOG_UNSUPPORTED(true);
+      return;
+   }
 
    for (i = 0; i < SOTargets; ++i) {
       Resource *resource = CastResource(phResource[i]);
       struct pipe_resource *buffer = CastPipeResource(phResource[i]);
       struct pipe_stream_output_target *so_target =
          resource ? resource->so_target : NULL;
+      candidate_resources[i] = resource;
 
       if (buffer) {
          unsigned buffer_size = buffer->width0;
@@ -2417,29 +2426,59 @@ SoSetTargets(D3D10DDI_HDEVICE hDevice,                                     // IN
          if (!so_target ||
              so_target->buffer != buffer ||
              so_target->buffer_size != buffer_size) {
-            if (so_target) {
-               pipe_so_target_reference(&resource->so_target, NULL);
+            so_target = NULL;
+            for (unsigned j = 0; j < i; ++j) {
+               if (candidate_resources[j] == resource) {
+                  so_target = candidate_targets[j];
+                  break;
+               }
             }
-            so_target = pipe->create_stream_output_target(pipe, buffer,
-                                                          0,/*buffer offset*/
-                                                          buffer_size);
-            resource->so_target = so_target;
+
+            if (!so_target) {
+               so_target = pipe->create_stream_output_target(pipe, buffer,
+                                                             0,/*buffer offset*/
+                                                             buffer_size);
+               if (!so_target) {
+                  DebugPrintf("%s: failed to create stream-output target %u\n",
+                              __func__, i);
+                  allocation_failed = true;
+                  break;
+               }
+               candidate_targets[i] = so_target;
+               continue;
+            }
          }
       }
-      pipe_so_target_reference(&pDevice->so_targets[i], so_target);
+
+      pipe_so_target_reference(&candidate_targets[i], so_target);
+   }
+
+   if (allocation_failed) {
+      for (i = 0; i < SOTargets; ++i)
+         pipe_so_target_reference(&candidate_targets[i], NULL);
+      SetError(hDevice, E_OUTOFMEMORY);
+      return;
+   }
+
+   for (i = 0; i < SOTargets; ++i) {
+      Resource *resource = candidate_resources[i];
+      if (resource && resource->so_target != candidate_targets[i]) {
+         pipe_so_target_reference(&resource->so_target,
+                                  candidate_targets[i]);
+      }
+      pipe_so_target_reference(&pDevice->so_targets[i],
+                               candidate_targets[i]);
    }
 
    for (i = 0; i < ClearTargets; ++i) {
       pipe_so_target_reference(&pDevice->so_targets[SOTargets + i], NULL);
    }
 
-   if (!pipe->set_stream_output_targets) {
-      LOG_UNSUPPORTED(pipe->set_stream_output_targets);
-      return;
-   }
-
    pipe->set_stream_output_targets(pipe, SOTargets, pDevice->so_targets,
                                    pOffsets, MESA_PRIM_UNKNOWN);
+
+   for (i = 0; i < SOTargets; ++i)
+      pipe_so_target_reference(&candidate_targets[i], NULL);
 }
 
 
