@@ -11,7 +11,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
+#include "counter_consumer_cs_5_0.h"
+#include "counter_producer_cs_5_0.h"
 #include "tri_ps_4_0.h"
 #include "tri_vs_4_0.h"
 
@@ -57,6 +60,288 @@ fail(const char *operation, HRESULT result)
    fprintf(stderr, "%s failed: 0x%08lx\n", operation,
            static_cast<unsigned long>(result));
    return EXIT_FAILURE;
+}
+
+bool
+read_u32_buffer(ID3D11DeviceContext *context,
+                ID3D11Buffer *source,
+                ID3D11Buffer *staging,
+                UINT *values,
+                UINT count,
+                const char *stage)
+{
+   context->CopyResource(staging, source);
+
+   D3D11_MAPPED_SUBRESOURCE mapped = {};
+   HRESULT result = context->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
+   if (FAILED(result)) {
+      fprintf(stderr, "%s Map(staging) failed: 0x%08lx\n", stage,
+              static_cast<unsigned long>(result));
+      return false;
+   }
+   if (!mapped.pData) {
+      context->Unmap(staging, 0);
+      fprintf(stderr, "%s returned an empty staging map\n", stage);
+      return false;
+   }
+
+   memcpy(values, mapped.pData, static_cast<size_t>(count) * sizeof(*values));
+   context->Unmap(staging, 0);
+   return true;
+}
+
+bool
+validate_structure_count(ID3D11DeviceContext *context,
+                         ID3D11Buffer *count_buffer,
+                         ID3D11Buffer *count_staging,
+                         ID3D11UnorderedAccessView *counter_uav,
+                         UINT expected,
+                         const char *stage)
+{
+   context->CopyStructureCount(count_buffer, 0, counter_uav);
+
+   UINT actual = 0;
+   if (!read_u32_buffer(context, count_buffer, count_staging, &actual, 1,
+                        stage))
+      return false;
+   if (actual != expected) {
+      fprintf(stderr, "%s count mismatch: expected %u, got %u\n", stage,
+              expected, actual);
+      return false;
+   }
+
+   printf("%s count: PASS value=%u\n", stage, actual);
+   return true;
+}
+
+bool
+validate_u32_sequence(const UINT *values,
+                      UINT count,
+                      UINT first,
+                      const char *stage)
+{
+   for (UINT i = 0; i < count; ++i) {
+      if (values[i] != first + i) {
+         fprintf(stderr, "%s value %u mismatch: expected %u, got %u\n",
+                 stage, i, first + i, values[i]);
+         return false;
+      }
+   }
+
+   return true;
+}
+
+bool
+validate_u32_set(const UINT *values,
+                 UINT count,
+                 UINT first,
+                 const char *stage)
+{
+   bool seen[8] = {};
+   if (count > ARRAYSIZE(seen))
+      return false;
+
+   for (UINT i = 0; i < count; ++i) {
+      if (values[i] < first || values[i] >= first + count ||
+          seen[values[i] - first]) {
+         fprintf(stderr, "%s invalid set value %u at index %u\n", stage,
+                 values[i], i);
+         return false;
+      }
+      seen[values[i] - first] = true;
+   }
+
+   return true;
+}
+
+bool
+validate_uav_counters(ID3D11Device *device, ID3D11DeviceContext *context)
+{
+   constexpr UINT kCounterElements = 8;
+   constexpr UINT kMarkerElements = 4;
+
+   D3D11_BUFFER_DESC counter_desc = {};
+   counter_desc.ByteWidth = kCounterElements * sizeof(UINT);
+   counter_desc.Usage = D3D11_USAGE_DEFAULT;
+   counter_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+   counter_desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+   counter_desc.StructureByteStride = sizeof(UINT);
+
+   ComPtr<ID3D11Buffer> counter_buffer;
+   HRESULT result =
+      device->CreateBuffer(&counter_desc, nullptr, &counter_buffer);
+   if (FAILED(result)) {
+      fail("CreateBuffer(counter payload)", result);
+      return false;
+   }
+
+   D3D11_UNORDERED_ACCESS_VIEW_DESC counter_uav_desc = {};
+   counter_uav_desc.Format = DXGI_FORMAT_UNKNOWN;
+   counter_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+   counter_uav_desc.Buffer.NumElements = kCounterElements;
+   counter_uav_desc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_COUNTER;
+
+   ComPtr<ID3D11UnorderedAccessView> counter_uav;
+   result = device->CreateUnorderedAccessView(
+      counter_buffer.Get(), &counter_uav_desc, &counter_uav);
+   if (FAILED(result)) {
+      fail("CreateUnorderedAccessView(counter)", result);
+      return false;
+   }
+
+   D3D11_BUFFER_DESC marker_desc = {};
+   marker_desc.ByteWidth = kMarkerElements * sizeof(UINT);
+   marker_desc.Usage = D3D11_USAGE_DEFAULT;
+   marker_desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+
+   ComPtr<ID3D11Buffer> marker_buffer;
+   result = device->CreateBuffer(&marker_desc, nullptr, &marker_buffer);
+   if (FAILED(result)) {
+      fail("CreateBuffer(counter markers)", result);
+      return false;
+   }
+
+   D3D11_UNORDERED_ACCESS_VIEW_DESC marker_uav_desc = {};
+   marker_uav_desc.Format = DXGI_FORMAT_R32_UINT;
+   marker_uav_desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+   marker_uav_desc.Buffer.NumElements = kMarkerElements;
+
+   ComPtr<ID3D11UnorderedAccessView> marker_uav;
+   result = device->CreateUnorderedAccessView(
+      marker_buffer.Get(), &marker_uav_desc, &marker_uav);
+   if (FAILED(result)) {
+      fail("CreateUnorderedAccessView(counter markers)", result);
+      return false;
+   }
+
+   D3D11_BUFFER_DESC count_desc = {};
+   count_desc.ByteWidth = sizeof(UINT);
+   count_desc.Usage = D3D11_USAGE_DEFAULT;
+
+   ComPtr<ID3D11Buffer> count_buffer;
+   result = device->CreateBuffer(&count_desc, nullptr, &count_buffer);
+   if (FAILED(result)) {
+      fail("CreateBuffer(structure count)", result);
+      return false;
+   }
+
+   D3D11_BUFFER_DESC counter_staging_desc = counter_desc;
+   counter_staging_desc.Usage = D3D11_USAGE_STAGING;
+   counter_staging_desc.BindFlags = 0;
+   counter_staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+   ComPtr<ID3D11Buffer> counter_staging;
+   result = device->CreateBuffer(&counter_staging_desc, nullptr,
+                                 &counter_staging);
+   if (FAILED(result)) {
+      fail("CreateBuffer(counter staging)", result);
+      return false;
+   }
+
+   D3D11_BUFFER_DESC marker_staging_desc = marker_desc;
+   marker_staging_desc.Usage = D3D11_USAGE_STAGING;
+   marker_staging_desc.BindFlags = 0;
+   marker_staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+   ComPtr<ID3D11Buffer> marker_staging;
+   result = device->CreateBuffer(&marker_staging_desc, nullptr,
+                                 &marker_staging);
+   if (FAILED(result)) {
+      fail("CreateBuffer(marker staging)", result);
+      return false;
+   }
+
+   D3D11_BUFFER_DESC count_staging_desc = count_desc;
+   count_staging_desc.Usage = D3D11_USAGE_STAGING;
+   count_staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+   ComPtr<ID3D11Buffer> count_staging;
+   result = device->CreateBuffer(&count_staging_desc, nullptr,
+                                 &count_staging);
+   if (FAILED(result)) {
+      fail("CreateBuffer(count staging)", result);
+      return false;
+   }
+
+   ComPtr<ID3D11ComputeShader> producer_shader;
+   result = device->CreateComputeShader(
+      g_counter_producer_cs, sizeof(g_counter_producer_cs), nullptr,
+      &producer_shader);
+   if (FAILED(result)) {
+      fail("CreateComputeShader(counter producer)", result);
+      return false;
+   }
+
+   ComPtr<ID3D11ComputeShader> consumer_shader;
+   result = device->CreateComputeShader(
+      g_counter_consumer_cs, sizeof(g_counter_consumer_cs), nullptr,
+      &consumer_shader);
+   if (FAILED(result)) {
+      fail("CreateComputeShader(counter consumer)", result);
+      return false;
+   }
+
+   ID3D11UnorderedAccessView *uavs[] = {counter_uav.Get(), marker_uav.Get()};
+   const UINT initial_counts[] = {2, D3D11_KEEP_UNORDERED_ACCESS_VIEWS};
+   context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs,
+                                      initial_counts);
+   if (!validate_structure_count(context, count_buffer.Get(),
+                                 count_staging.Get(), counter_uav.Get(), 2,
+                                 "initial counter"))
+      return false;
+
+   context->CSSetShader(producer_shader.Get(), nullptr, 0);
+   context->Dispatch(1, 1, 1);
+
+   ID3D11UnorderedAccessView *null_uavs[ARRAYSIZE(uavs)] = {};
+   context->CSSetUnorderedAccessViews(0, ARRAYSIZE(null_uavs), null_uavs,
+                                      nullptr);
+   context->CSSetShader(nullptr, nullptr, 0);
+
+   if (!validate_structure_count(context, count_buffer.Get(),
+                                 count_staging.Get(), counter_uav.Get(), 6,
+                                 "producer counter"))
+      return false;
+
+   UINT counter_values[kCounterElements] = {};
+   if (!read_u32_buffer(context, counter_buffer.Get(), counter_staging.Get(),
+                        counter_values, ARRAYSIZE(counter_values),
+                        "producer payload") ||
+       !validate_u32_sequence(&counter_values[2], 4, 100,
+                              "producer payload"))
+      return false;
+
+   UINT marker_values[kMarkerElements] = {};
+   if (!read_u32_buffer(context, marker_buffer.Get(), marker_staging.Get(),
+                        marker_values, ARRAYSIZE(marker_values),
+                        "producer markers") ||
+       !validate_u32_set(marker_values, ARRAYSIZE(marker_values), 2,
+                         "producer markers"))
+      return false;
+
+   const UINT preserved_counts[] = {
+      D3D11_KEEP_UNORDERED_ACCESS_VIEWS,
+      D3D11_KEEP_UNORDERED_ACCESS_VIEWS,
+   };
+   context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs,
+                                      preserved_counts);
+   context->CSSetShader(consumer_shader.Get(), nullptr, 0);
+   context->Dispatch(1, 1, 1);
+   context->CSSetUnorderedAccessViews(0, ARRAYSIZE(null_uavs), null_uavs,
+                                      nullptr);
+   context->CSSetShader(nullptr, nullptr, 0);
+
+   if (!validate_structure_count(context, count_buffer.Get(),
+                                 count_staging.Get(), counter_uav.Get(), 4,
+                                 "consumer counter"))
+      return false;
+
+   memset(marker_values, 0, sizeof(marker_values));
+   if (!read_u32_buffer(context, marker_buffer.Get(), marker_staging.Get(),
+                        marker_values, ARRAYSIZE(marker_values),
+                        "consumer values") ||
+       !validate_u32_set(marker_values, 2, 102, "consumer values"))
+      return false;
+
+   printf("D3D11 native UAV counter probe: PASS\n");
+   return true;
 }
 
 bool
@@ -161,6 +446,12 @@ main()
       &device, &feature_level, &context);
    if (FAILED(result))
       return fail("D3D11CreateDevice", result);
+   if (feature_level < D3D_FEATURE_LEVEL_11_0) {
+      fprintf(stderr, "D3D11 feature level 11_0 is required for counters\n");
+      return EXIT_FAILURE;
+   }
+   if (!validate_uav_counters(device.Get(), context.Get()))
+      return EXIT_FAILURE;
 
    D3D11_TEXTURE2D_DESC render_desc = {};
    render_desc.Width = kWidth;

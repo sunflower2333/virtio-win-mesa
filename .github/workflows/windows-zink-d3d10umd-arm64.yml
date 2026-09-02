@@ -75,6 +75,77 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Generate pinned SM5 counter fixtures
+        shell: pwsh
+        run: |
+          $packageId = 'Microsoft.Windows.SDK.CPP'
+          $packageVersion = '10.0.26100.6584'
+          $expectedPackageHash = '5d31b38205bdd9ac761b4cb39fbbc6b7209b01c11194324afc674d7d119483a0'
+          $expectedFxcHash = '05dca4e48ce764234f045d7ccd5687398564d762823955dc81624ba5c6f3f3c4'
+          $expectedCompilerHash = 'ec07559efadf04371bbe1253a39aecd366d08617f7c0eb00ac9df99f79fba444'
+          $expectedProducerHash = 'bfe3e2d09d175e82649b58c22a570d3df93c5a56325ed191d4734b6f530c4a92'
+          $expectedConsumerHash = '9dc4fa9552346dd508911c1a0e055dc0b63157a58f91f339a67d600a73022b72'
+          $archive = Join-Path $env:RUNNER_TEMP 'microsoft.windows.sdk.cpp.zip'
+          $root = Join-Path $env:RUNNER_TEMP 'microsoft.windows.sdk.cpp'
+          $packageIdLower = $packageId.ToLowerInvariant()
+          $uri = "https://api.nuget.org/v3-flatcontainer/$packageIdLower/$packageVersion/$packageIdLower.$packageVersion.nupkg"
+
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          $actualPackageHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          if ($actualPackageHash -ne $expectedPackageHash) {
+            throw "Windows SDK package hash mismatch: expected $expectedPackageHash, got $actualPackageHash"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $root -Force
+
+          $toolRoot = Join-Path $root 'c/bin/10.0.26100.0/x64'
+          $fxc = Join-Path $toolRoot 'fxc.exe'
+          $compiler = Join-Path $toolRoot 'd3dcompiler_47.dll'
+          $actualFxcHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $fxc).Hash.ToLowerInvariant()
+          $actualCompilerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $compiler).Hash.ToLowerInvariant()
+          if ($actualFxcHash -ne $expectedFxcHash) {
+            throw "fxc.exe hash mismatch: expected $expectedFxcHash, got $actualFxcHash"
+          }
+          if ($actualCompilerHash -ne $expectedCompilerHash) {
+            throw "d3dcompiler_47.dll hash mismatch: expected $expectedCompilerHash, got $actualCompilerHash"
+          }
+
+          $fixtureRoot = 'src/gallium/targets/d3d10umd/tests'
+          $producerHlsl = Join-Path $fixtureRoot 'counter_producer_cs_5_0.hlsl'
+          $consumerHlsl = Join-Path $fixtureRoot 'counter_consumer_cs_5_0.hlsl'
+          $producerHeader = Join-Path $env:RUNNER_TEMP 'counter_producer_cs_5_0.h'
+          $consumerHeader = Join-Path $env:RUNNER_TEMP 'counter_consumer_cs_5_0.h'
+          $producerAsm = Join-Path $env:RUNNER_TEMP 'counter_producer_cs_5_0.asm'
+          $consumerAsm = Join-Path $env:RUNNER_TEMP 'counter_consumer_cs_5_0.asm'
+
+          & $fxc /nologo /WX /Ges /O3 /Qstrip_debug /Qstrip_reflect /T cs_5_0 /E main `
+            /Vn g_counter_producer_cs /Fh $producerHeader /Fc $producerAsm $producerHlsl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $fxc /nologo /WX /Ges /O3 /Qstrip_debug /Qstrip_reflect /T cs_5_0 /E main `
+            /Vn g_counter_consumer_cs /Fh $consumerHeader /Fc $consumerAsm $consumerHlsl
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $producerText = Get-Content -LiteralPath $producerAsm -Raw
+          $consumerText = Get-Content -LiteralPath $consumerAsm -Raw
+          if ($producerText -notmatch '\bimm_atomic_alloc\b' -or
+              $producerText -notmatch '\bstore_uav_typed\b') {
+            throw 'producer fixture lacks native counter allocation or typed UAV store'
+          }
+          if ($consumerText -notmatch '\bimm_atomic_consume\b' -or
+              $consumerText -notmatch '\bstore_uav_typed\b') {
+            throw 'consumer fixture lacks native counter consumption or typed UAV store'
+          }
+          $actualProducerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $producerHeader).Hash.ToLowerInvariant()
+          $actualConsumerHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $consumerHeader).Hash.ToLowerInvariant()
+          if ($actualProducerHash -ne $expectedProducerHash) {
+            throw "producer fixture hash mismatch: expected $expectedProducerHash, got $actualProducerHash"
+          }
+          if ($actualConsumerHash -ne $expectedConsumerHash) {
+            throw "consumer fixture hash mismatch: expected $expectedConsumerHash, got $actualConsumerHash"
+          }
+          Get-FileHash -Algorithm SHA256 -LiteralPath `
+            $producerHeader, $consumerHeader, $producerAsm, $consumerAsm |
+            Format-List
+
       - name: Install Meson generators
         shell: pwsh
         run: |

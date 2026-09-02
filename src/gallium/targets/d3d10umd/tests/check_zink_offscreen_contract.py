@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import hashlib
 from pathlib import Path
 
 
@@ -18,6 +19,18 @@ stubs = ROOT / "src/gallium/frontends/d3d10umd/YttriumStubs.cpp"
 resource = ROOT / "src/gallium/drivers/zink/zink_resource.c"
 atomic = ROOT / "src/util/u_atomic.h"
 probe = ROOT / "src/gallium/targets/d3d10umd/tests/zink_d3d11_offscreen.cpp"
+producer_hlsl = (
+    ROOT / "src/gallium/targets/d3d10umd/tests/counter_producer_cs_5_0.hlsl"
+)
+consumer_hlsl = (
+    ROOT / "src/gallium/targets/d3d10umd/tests/counter_consumer_cs_5_0.hlsl"
+)
+producer_header = (
+    ROOT / "src/gallium/targets/d3d10umd/tests/counter_producer_cs_5_0.h"
+)
+consumer_header = (
+    ROOT / "src/gallium/targets/d3d10umd/tests/counter_consumer_cs_5_0.h"
+)
 workflow = ROOT / ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 
 meson_text = meson.read_text(encoding="utf-8")
@@ -27,6 +40,10 @@ stubs_text = stubs.read_text(encoding="utf-8")
 resource_text = resource.read_text(encoding="utf-8")
 atomic_text = atomic.read_text(encoding="utf-8")
 probe_text = probe.read_text(encoding="utf-8")
+producer_hlsl_text = producer_hlsl.read_text(encoding="utf-8")
+consumer_hlsl_text = consumer_hlsl.read_text(encoding="utf-8")
+producer_header_text = producer_header.read_text(encoding="utf-8")
+consumer_header_text = consumer_header.read_text(encoding="utf-8")
 workflow_text = workflow.read_text(encoding="utf-8")
 
 require(meson_text, "with_gallium_zink,", meson)
@@ -119,6 +136,13 @@ require(probe_text, "CopyResource", probe)
 require(probe_text, "D3D11_MAP_READ", probe)
 require(probe_text, "pixel[0] != 0 || pixel[1] != 255 || pixel[2] != 255", probe)
 require(probe_text, "kExpectedChecksum = 3133440", probe)
+require(probe_text, '#include "counter_producer_cs_5_0.h"', probe)
+require(probe_text, '#include "counter_consumer_cs_5_0.h"', probe)
+require(probe_text, "D3D11_BUFFER_UAV_FLAG_COUNTER", probe)
+require(probe_text, "D3D11_KEEP_UNORDERED_ACCESS_VIEWS", probe)
+require(probe_text, "CopyStructureCount(count_buffer, 0, counter_uav)", probe)
+require(probe_text, "CreateComputeShader(\n      g_counter_producer_cs", probe)
+require(probe_text, "CreateComputeShader(\n      g_counter_consumer_cs", probe)
 require(workflow_text, "viogpud3d-zink zink_d3d11_offscreen", workflow)
 require(workflow_text, "artifact/zink_d3d11_offscreen.exe", workflow)
 require(workflow_text, "$files.Count -ne 2", workflow)
@@ -134,6 +158,76 @@ require(
 )
 for header in ("d3d10umddi.h", "d3dumddi.h", "d3dkmddi.h"):
     require(workflow_text, header, workflow)
+
+for fragment in (
+    "Microsoft.Windows.SDK.CPP",
+    "5d31b38205bdd9ac761b4cb39fbbc6b7209b01c11194324afc674d7d119483a0",
+    "05dca4e48ce764234f045d7ccd5687398564d762823955dc81624ba5c6f3f3c4",
+    "ec07559efadf04371bbe1253a39aecd366d08617f7c0eb00ac9df99f79fba444",
+    "bfe3e2d09d175e82649b58c22a570d3df93c5a56325ed191d4734b6f530c4a92",
+    "9dc4fa9552346dd508911c1a0e055dc0b63157a58f91f339a67d600a73022b72",
+    "imm_atomic_alloc",
+    "imm_atomic_consume",
+    "store_uav_typed",
+    "/T cs_5_0",
+):
+    require(workflow_text, fragment, workflow)
+if "zink-d3d11-counter-fixtures" in workflow_text:
+    raise AssertionError("temporary counter fixture artifact remains enabled")
+
+for text, source, fragments in (
+    (
+        producer_hlsl_text,
+        producer_hlsl,
+        (
+            "RWStructuredBuffer<uint> values : register(u0);",
+            "RWBuffer<uint> markers : register(u1);",
+            "[numthreads(4, 1, 1)]",
+            "values.IncrementCounter()",
+            "values[index] = 98u + index;",
+            "markers[dispatch_id.x] = index;",
+        ),
+    ),
+    (
+        consumer_hlsl_text,
+        consumer_hlsl,
+        (
+            "RWStructuredBuffer<uint> values : register(u0);",
+            "RWBuffer<uint> markers : register(u1);",
+            "[numthreads(2, 1, 1)]",
+            "values.DecrementCounter()",
+            "markers[dispatch_id.x] = values[index];",
+        ),
+    ),
+):
+    for fragment in fragments:
+        require(text, fragment, source)
+
+for text, source, fragments in (
+    (
+        producer_header_text,
+        producer_header,
+        ("cs_5_0", "imm_atomic_alloc", "store_structured", "store_uav_typed"),
+    ),
+    (
+        consumer_header_text,
+        consumer_header,
+        ("cs_5_0", "imm_atomic_consume", "ld_structured", "store_uav_typed"),
+    ),
+):
+    for fragment in fragments:
+        require(text, fragment, source)
+
+expected_fixture_hashes = {
+    producer_header: "8c2f2a58b81ce481784025799684a2758b1b3f0e6c53dbca5a1362c4e65c4c16",
+    consumer_header: "06a8361ed5510e0b59d8ce4ecc64858f8fe7a11ec4839328ba8374144b8582c2",
+}
+for fixture, expected_hash in expected_fixture_hashes.items():
+    actual_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    if actual_hash != expected_hash:
+        raise AssertionError(
+            f"counter fixture hash mismatch for {fixture}: {actual_hash}"
+        )
 
 for forbidden in (
     "CreateSwapChain",
@@ -180,6 +274,25 @@ for fragment in draw_order:
     draw_position = main_body.index(fragment, draw_position) + len(fragment)
 if main_body.count("validate_cyan_frame(context.Get()") != 2:
     raise AssertionError("direct and indirect draws need independent readback checks")
+
+counter_start = probe_text.index("validate_uav_counters(ID3D11Device")
+counter_end = probe_text.index("\nbool\nvalidate_cyan_frame", counter_start)
+counter_body = probe_text[counter_start:counter_end]
+for fragment in (
+    "initial_counts[] = {2, D3D11_KEEP_UNORDERED_ACCESS_VIEWS}",
+    'counter_uav.Get(), 2,\n                                 "initial counter"',
+    'counter_uav.Get(), 6,\n                                 "producer counter"',
+    "validate_u32_sequence(&counter_values[2], 4, 100",
+    "validate_u32_set(marker_values, ARRAYSIZE(marker_values), 2",
+    "preserved_counts[]",
+    'counter_uav.Get(), 4,\n                                 "consumer counter"',
+    'validate_u32_set(marker_values, 2, 102, "consumer values")',
+):
+    require(counter_body, fragment, probe)
+if counter_body.count("context->Dispatch(1, 1, 1)") != 2:
+    raise AssertionError("counter producer and consumer need separate dispatches")
+if counter_body.count("validate_structure_count(context") != 3:
+    raise AssertionError("initial, producer, and consumer counts need validation")
 
 guard = resource_text.index(
     "whandle->type == WINSYS_HANDLE_TYPE_D3DKMT_ALLOC"
