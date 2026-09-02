@@ -223,7 +223,10 @@ expected_fixture_hashes = {
     consumer_header: "06a8361ed5510e0b59d8ce4ecc64858f8fe7a11ec4839328ba8374144b8582c2",
 }
 for fixture, expected_hash in expected_fixture_hashes.items():
-    actual_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    fixture_bytes = fixture.read_bytes().replace(b"\r\n", b"\n")
+    if b"\r" in fixture_bytes:
+        raise AssertionError(f"counter fixture has a bare carriage return: {fixture}")
+    actual_hash = hashlib.sha256(fixture_bytes).hexdigest()
     if actual_hash != expected_hash:
         raise AssertionError(
             f"counter fixture hash mismatch for {fixture}: {actual_hash}"
