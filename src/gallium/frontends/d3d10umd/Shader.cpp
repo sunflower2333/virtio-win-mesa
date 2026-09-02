@@ -3509,19 +3509,54 @@ DispatchIndirect(D3D10DDI_HDEVICE hDevice,
 {
    LOG_ENTRYPOINT();
 
+   struct DispatchIndirectArgs {
+      UINT ThreadGroupCountX;
+      UINT ThreadGroupCountY;
+      UINT ThreadGroupCountZ;
+   };
+
    Device *pDevice = CastDevice(hDevice);
    Resource *args = CastResource(hBufferForArgs);
-   UINT dispatch_args[3];
 
-   if (!pDevice || !pDevice->pipe || !args || !args->resource)
+   if (!pDevice || !pDevice->pipe)
       return;
 
-   if (!ReadBufferRange(pDevice->pipe, args->resource,
-                        AlignedByteOffsetForArgs, sizeof(dispatch_args),
-                        dispatch_args))
+   if (!ValidateIndirectBuffer(args, AlignedByteOffsetForArgs,
+                               sizeof(DispatchIndirectArgs))) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+   }
+
+   Shader *cs = pDevice->bound_cs;
+   if (!cs)
       return;
 
-   Dispatch(hDevice, dispatch_args[0], dispatch_args[1], dispatch_args[2]);
+   if (cs->compute_emulation != COMPUTE_EMULATION_NONE) {
+      DispatchIndirectArgs dispatch_args = {};
+      if (!ReadBufferRange(pDevice->pipe, args->resource,
+                           AlignedByteOffsetForArgs, sizeof(dispatch_args),
+                           &dispatch_args))
+         return;
+
+      Dispatch(hDevice, dispatch_args.ThreadGroupCountX,
+               dispatch_args.ThreadGroupCountY,
+               dispatch_args.ThreadGroupCountZ);
+      return;
+   }
+
+   if (!cs->handle)
+      return;
+
+   struct pipe_context *pipe = pDevice->pipe;
+   struct pipe_grid_info info = {};
+   info.work_dim = 3;
+   info.block[0] = cs->thread_group_size[0] ? cs->thread_group_size[0] : 1;
+   info.block[1] = cs->thread_group_size[1] ? cs->thread_group_size[1] : 1;
+   info.block[2] = cs->thread_group_size[2] ? cs->thread_group_size[2] : 1;
+   info.indirect = args->resource;
+   info.indirect_offset = AlignedByteOffsetForArgs;
+
+   pipe->launch_grid(pipe, &info);
 }
 
 void APIENTRY

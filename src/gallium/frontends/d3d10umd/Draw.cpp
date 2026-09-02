@@ -89,17 +89,6 @@ ReadBufferRange(struct pipe_context *pipe, Resource *resource,
    return false;
 }
 
-static bool
-ValidateIndirectDrawBuffer(Resource *resource, unsigned offset, unsigned size)
-{
-   return resource && resource->resource &&
-          resource->resource->target == PIPE_BUFFER &&
-          (resource->MiscFlags & D3D11_DDI_RESOURCE_MISC_DRAWINDIRECT_ARGS) &&
-          (resource->resource->bind & PIPE_BIND_COMMAND_ARGS_BUFFER) &&
-          !(offset & 3) && offset <= resource->resource->width0 &&
-          size <= resource->resource->width0 - offset;
-}
-
 static unsigned
 ClampedUAdd(unsigned a,
             unsigned b)
@@ -436,8 +425,8 @@ DrawIndexedInstancedIndirect(D3D10DDI_HDEVICE hDevice,
    if (!pDevice || !pDevice->pipe)
       return;
 
-   if (!ValidateIndirectDrawBuffer(pArgs, AlignedByteOffsetForArgs,
-                                   sizeof(DrawIndexedInstancedIndirectArgs))) {
+   if (!ValidateIndirectBuffer(pArgs, AlignedByteOffsetForArgs,
+                               sizeof(DrawIndexedInstancedIndirectArgs))) {
       SetError(hDevice, E_INVALIDARG);
       return;
    }
@@ -498,8 +487,8 @@ DrawInstancedIndirect(D3D10DDI_HDEVICE hDevice,
    if (!pDevice || !pDevice->pipe)
       return;
 
-   if (!ValidateIndirectDrawBuffer(pArgs, AlignedByteOffsetForArgs,
-                                   sizeof(DrawInstancedIndirectArgs))) {
+   if (!ValidateIndirectBuffer(pArgs, AlignedByteOffsetForArgs,
+                               sizeof(DrawInstancedIndirectArgs))) {
       SetError(hDevice, E_INVALIDARG);
       return;
    }

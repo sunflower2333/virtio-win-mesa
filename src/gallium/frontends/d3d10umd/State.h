@@ -269,6 +269,18 @@ CastResource(DXGI_DDI_HRESOURCE hResource)
 }
 
 
+static inline bool
+ValidateIndirectBuffer(Resource *resource, unsigned offset, unsigned size)
+{
+   return resource && resource->resource &&
+          resource->resource->target == PIPE_BUFFER &&
+          (resource->MiscFlags & D3D11_DDI_RESOURCE_MISC_DRAWINDIRECT_ARGS) &&
+          (resource->resource->bind & PIPE_BIND_COMMAND_ARGS_BUFFER) &&
+          !(offset & 3) && offset <= resource->resource->width0 &&
+          size <= resource->resource->width0 - offset;
+}
+
+
 static inline struct pipe_resource *
 CastPipeResource(D3D10DDI_HRESOURCE hResource)
 {

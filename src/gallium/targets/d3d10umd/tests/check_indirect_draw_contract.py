@@ -47,11 +47,13 @@ def canonical(text: str) -> str:
 
 draw = ROOT / "src/gallium/frontends/d3d10umd/Draw.cpp"
 resource = ROOT / "src/gallium/frontends/d3d10umd/Resource.cpp"
+state = ROOT / "src/gallium/frontends/d3d10umd/State.h"
 device = ROOT / "src/gallium/frontends/d3d10umd/Device.cpp"
 workflow = ROOT / ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 
 draw_text = draw.read_text(encoding="utf-8")
 resource_text = resource.read_text(encoding="utf-8")
+state_text = state.read_text(encoding="utf-8")
 device_text = device.read_text(encoding="utf-8")
 workflow_text = workflow.read_text(encoding="utf-8")
 
@@ -71,7 +73,7 @@ require(
 require(create_body, "templat.bind |= PIPE_BIND_COMMAND_ARGS_BUFFER;", resource)
 
 validation_body = canonical(
-    function_body(draw_text, "ValidateIndirectDrawBuffer(", draw)
+    function_body(state_text, "ValidateIndirectBuffer(", state)
 )
 require(
     validation_body,
@@ -81,7 +83,7 @@ require(
     "(resource->resource->bind & PIPE_BIND_COMMAND_ARGS_BUFFER) && "
     "!(offset & 3) && offset <= resource->resource->width0 && "
     "size <= resource->resource->width0 - offset;",
-    draw,
+    state,
 )
 
 indexed_body = canonical(
@@ -89,7 +91,7 @@ indexed_body = canonical(
         draw_text, "DrawIndexedInstancedIndirect(D3D10DDI_HDEVICE", draw
     )
 )
-require(indexed_body, "ValidateIndirectDrawBuffer(", draw)
+require(indexed_body, "ValidateIndirectBuffer(", draw)
 require(indexed_body, "SetError(hDevice, E_INVALIDARG);", draw)
 native_guard = indexed_body.find(
     "pDevice->index_buffer && pDevice->index_size && !pDevice->ib_offset"
@@ -118,7 +120,7 @@ require(indexed_body, "SetError(hDevice, E_OUTOFMEMORY);", draw)
 nonindexed_body = canonical(
     function_body(draw_text, "DrawInstancedIndirect(D3D10DDI_HDEVICE", draw)
 )
-require(nonindexed_body, "ValidateIndirectDrawBuffer(", draw)
+require(nonindexed_body, "ValidateIndirectBuffer(", draw)
 require(nonindexed_body, "SetError(hDevice, E_INVALIDARG);", draw)
 for fragment in (
     "ResolveState(pDevice);",
