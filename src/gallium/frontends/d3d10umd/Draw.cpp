@@ -150,7 +150,8 @@ ResolveState(D3D10DDI_HDEVICE hDevice, Device *pDevice)
       if (remapped) {
          void *new_handle = pipe->create_gs_state(pipe, &resolved_state);
          if (!new_handle) {
-            YTTRIUM_WARN("yttrium: d3d10umd stream-output state remap failed\n");
+            DebugPrintf("%s: failed to create remapped stream-output state\n",
+                        __func__);
             SetError(hDevice, E_OUTOFMEMORY);
             return false;
          }

@@ -76,6 +76,8 @@ for fragment in (
     "vs, gs->stream_output_register_index[i]",
     "void *new_handle = pipe->create_gs_state(pipe, &resolved_state);",
     "if (!new_handle)",
+    "DebugPrintf(\"%s: failed to create remapped stream-output state\\n\", "
+    "__func__);",
     "SetError(hDevice, E_OUTOFMEMORY);",
     "return false;",
     "old_handle = gs->handle;",
@@ -86,6 +88,9 @@ for fragment in (
     "return true;",
 ):
     require(resolve, fragment, draw)
+
+if "YTTRIUM_WARN" in resolve:
+    raise AssertionError("ResolveState uses an unavailable Yttrium logging macro")
 
 create = resolve.index("create_gs_state")
 failure = resolve.index("if (!new_handle)", create)
