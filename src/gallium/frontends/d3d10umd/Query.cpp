@@ -501,8 +501,10 @@ CheckPredicate(Device *pDevice)
    union pipe_query_result result;
    memset(&result, 0, sizeof result);
 
+   const bool wait =
+      !(pQuery->Flags & D3D10DDI_QUERY_MISCFLAG_PREDICATEHINT);
    bool ret;
-   ret = pipe->get_query_result(pipe, query, false, &result);
+   ret = pipe->get_query_result(pipe, query, wait, &result);
    if (!ret) {
       return true;
    }
