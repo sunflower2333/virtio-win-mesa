@@ -578,9 +578,18 @@ _GetGammaCaps( DXGI_DDI_ARG_GET_GAMMA_CONTROL_CAPS *GetCaps )
 {
    LOG_ENTRYPOINT();
 
-   DXGI_GAMMA_CONTROL_CAPABILITIES *pCaps;
+   if (!GetCaps || !GetCaps->pGammaCapabilities)
+      return E_INVALIDARG;
 
-   pCaps = GetCaps->pGammaCapabilities;
+   Device *device = CastDevice(GetCaps->hDevice);
+   if (!device)
+      return E_INVALIDARG;
+
+   DXGI_GAMMA_CONTROL_CAPABILITIES *pCaps = GetCaps->pGammaCapabilities;
+   memset(pCaps, 0, sizeof(*pCaps));
+
+   if (dxgi_is_zink_screen(device))
+      return DXGI_DDI_ERR_UNSUPPORTED;
 
    pCaps->ScaleAndOffsetSupported = false;
    pCaps->MinConvertedValue = 0.0;
