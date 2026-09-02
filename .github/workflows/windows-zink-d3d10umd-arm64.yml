@@ -155,6 +155,10 @@ jobs:
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_multisample_quality_levels.py
 
+      - name: Verify indirect draw contract
+        shell: pwsh
+        run: python src/gallium/targets/d3d10umd/tests/check_indirect_draw_contract.py
+
       - name: Verify resource copy-region empty-box contract
         shell: pwsh
         run: python src/gallium/targets/d3d10umd/tests/check_resource_copy_region_empty_box.py

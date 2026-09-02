@@ -89,6 +89,17 @@ ReadBufferRange(struct pipe_context *pipe, Resource *resource,
    return false;
 }
 
+static bool
+ValidateIndirectDrawBuffer(Resource *resource, unsigned offset, unsigned size)
+{
+   return resource && resource->resource &&
+          resource->resource->target == PIPE_BUFFER &&
+          (resource->MiscFlags & D3D11_DDI_RESOURCE_MISC_DRAWINDIRECT_ARGS) &&
+          (resource->resource->bind & PIPE_BIND_COMMAND_ARGS_BUFFER) &&
+          !(offset & 3) && offset <= resource->resource->width0 &&
+          size <= resource->resource->width0 - offset;
+}
+
 static unsigned
 ClampedUAdd(unsigned a,
             unsigned b)
@@ -418,13 +429,48 @@ DrawIndexedInstancedIndirect(D3D10DDI_HDEVICE hDevice,
       UINT StartIndexLocation;
       INT BaseVertexLocation;
       UINT StartInstanceLocation;
-   } args = {};
+   };
 
    Device *pDevice = CastDevice(hDevice);
    Resource *pArgs = CastResource(hBufferForArgs);
+   if (!pDevice || !pDevice->pipe)
+      return;
+
+   if (!ValidateIndirectDrawBuffer(pArgs, AlignedByteOffsetForArgs,
+                                   sizeof(DrawIndexedInstancedIndirectArgs))) {
+      SetError(hDevice, E_INVALIDARG);
+      return;
+   }
+
+   if (pDevice->index_buffer && pDevice->index_size && !pDevice->ib_offset) {
+      ResolveState(pDevice);
+      if (RunPixelShaderEmulation(pDevice))
+         return;
+
+      assert(pDevice->primitive < MESA_PRIM_COUNT);
+      struct pipe_draw_info info;
+      util_draw_init_info(&info);
+      info.index_size = pDevice->index_size;
+      info.mode = pDevice->primitive;
+      info.index.resource = pDevice->index_buffer;
+      info.primitive_restart = true;
+      info.restart_index = pDevice->restart_index;
+
+      struct pipe_draw_indirect_info indirect = {};
+      indirect.offset = AlignedByteOffsetForArgs;
+      indirect.stride = sizeof(DrawIndexedInstancedIndirectArgs);
+      indirect.draw_count = 1;
+      indirect.buffer = pArgs->resource;
+
+      pDevice->pipe->draw_vbo(pDevice->pipe, &info, 0, &indirect, NULL, 1);
+      return;
+   }
+
+   DrawIndexedInstancedIndirectArgs args = {};
    if (!ReadBufferRange(pDevice->pipe, pArgs, AlignedByteOffsetForArgs,
                         sizeof(args), &args)) {
       LOG_UNSUPPORTED("DrawIndexedInstancedIndirect failed to read args");
+      SetError(hDevice, E_OUTOFMEMORY);
       return;
    }
 
@@ -445,18 +491,35 @@ DrawInstancedIndirect(D3D10DDI_HDEVICE hDevice,
       UINT InstanceCount;
       UINT StartVertexLocation;
       UINT StartInstanceLocation;
-   } args = {};
+   };
 
    Device *pDevice = CastDevice(hDevice);
    Resource *pArgs = CastResource(hBufferForArgs);
-   if (!ReadBufferRange(pDevice->pipe, pArgs, AlignedByteOffsetForArgs,
-                        sizeof(args), &args)) {
-      LOG_UNSUPPORTED("DrawInstancedIndirect failed to read args");
+   if (!pDevice || !pDevice->pipe)
+      return;
+
+   if (!ValidateIndirectDrawBuffer(pArgs, AlignedByteOffsetForArgs,
+                                   sizeof(DrawInstancedIndirectArgs))) {
+      SetError(hDevice, E_INVALIDARG);
       return;
    }
 
-   DrawInstanced(hDevice, args.VertexCountPerInstance, args.InstanceCount,
-                 args.StartVertexLocation, args.StartInstanceLocation);
+   ResolveState(pDevice);
+   if (RunPixelShaderEmulation(pDevice))
+      return;
+
+   assert(pDevice->primitive < MESA_PRIM_COUNT);
+   struct pipe_draw_info info;
+   util_draw_init_info(&info);
+   info.mode = pDevice->primitive;
+
+   struct pipe_draw_indirect_info indirect = {};
+   indirect.offset = AlignedByteOffsetForArgs;
+   indirect.stride = sizeof(DrawInstancedIndirectArgs);
+   indirect.draw_count = 1;
+   indirect.buffer = pArgs->resource;
+
+   pDevice->pipe->draw_vbo(pDevice->pipe, &info, 0, &indirect, NULL, 1);
 }
 
 

@@ -630,6 +630,7 @@ sanitize_d3d11_resource_misc_flags(UINT flags)
    const UINT supported =
       D3D10_DDI_RESOURCE_MISC_SHARED |
       D3D10_DDI_RESOURCE_MISC_DISCARD_ON_PRESENT |
+      D3D11_DDI_RESOURCE_MISC_DRAWINDIRECT_ARGS |
       D3D10_DDI_RESOURCE_MISC_REMOTE;
 
    UINT sanitized = flags & supported;
@@ -1154,6 +1155,8 @@ CreateResource(D3D10DDI_HDEVICE hDevice,                                // IN
    templat.nr_storage_samples = pCreateResource->SampleDesc.Count;
    templat.bind       = translate_resource_flags(pCreateResource->BindFlags);
 #if SUPPORT_D3D11
+   if (pCreateResource->MiscFlags & D3D11_DDI_RESOURCE_MISC_DRAWINDIRECT_ARGS)
+      templat.bind |= PIPE_BIND_COMMAND_ARGS_BUFFER;
    if (pCreateResource->BindFlags & D3D11_DDI_BIND_UNORDERED_ACCESS) {
       if (pCreateResource->ResourceDimension == D3D10DDIRESOURCE_BUFFER)
          templat.bind |= PIPE_BIND_SHADER_BUFFER;
