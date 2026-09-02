@@ -161,7 +161,6 @@ InitShaderObject(Shader *shader, mesa_shader_stage stage)
 {
    memset(shader, 0, sizeof(*shader));
    shader->type = stage;
-   shader->output_resolved = true;
    InitShaderOutputMapping(shader);
 }
 
@@ -2312,8 +2311,6 @@ CreateGeometryShaderWithStreamOutput(
          return;
       }
    }
-   pShader->output_resolved = (pShader->state.tokens != NULL);
-
    for (unsigned i = 0; i < pData->NumEntries; ++i) {
       CONST D3D10DDIARG_STREAM_OUTPUT_DECLARATION_ENTRY* pOutputStreamDecl =
             &pData->pOutputStreamDecl[i];
@@ -2344,6 +2341,8 @@ CreateGeometryShaderWithStreamOutput(
          ++num_holes;
       } else {
          unsigned idx = i - num_holes;
+         pShader->stream_output_register_index[idx] =
+            pOutputStreamDecl->RegisterIndex;
          pShader->state.stream_output.output[idx].start_component =
             start_component;
          pShader->state.stream_output.output[idx].num_components =

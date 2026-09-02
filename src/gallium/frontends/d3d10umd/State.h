@@ -92,7 +92,7 @@ struct Shader
    bool tessellation_properties_valid;
    bool tessellation_compiled_properties_valid;
    unsigned output_mapping[PIPE_MAX_SHADER_OUTPUTS];
-   bool output_resolved;
+   unsigned stream_output_register_index[PIPE_MAX_SO_OUTPUTS];
    bool no_rasterized_stream;
 };
 

@@ -123,7 +123,7 @@ nonindexed_body = canonical(
 require(nonindexed_body, "ValidateIndirectBuffer(", draw)
 require(nonindexed_body, "SetError(hDevice, E_INVALIDARG);", draw)
 for fragment in (
-    "ResolveState(pDevice);",
+    "if (!ResolveState(hDevice, pDevice))",
     "RunPixelShaderEmulation(pDevice)",
     "util_draw_init_info(&info);",
     "info.mode = pDevice->primitive;",

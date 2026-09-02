@@ -125,8 +125,8 @@ update_velems(Device *pDevice)
  * state are incorrect and we need to remap them back to the correct
  * state.
  */
-static void
-ResolveState(Device *pDevice)
+static bool
+ResolveState(D3D10DDI_HDEVICE hDevice, Device *pDevice)
 {
    RefreshBoundShaderResourceViews(pDevice);
 
@@ -136,22 +136,31 @@ ResolveState(Device *pDevice)
       Shader *vs = pDevice->bound_vs;
       bool remapped = false;
       struct pipe_context *pipe = pDevice->pipe;
-      if (!gs->output_resolved) {
-         for (unsigned i = 0; i < gs->state.stream_output.num_outputs; ++i) {
-            unsigned mapping =
-               ShaderFindOutputMapping(vs, gs->state.stream_output.output[i].register_index);
-            if (mapping != gs->state.stream_output.output[i].register_index) {
-               gs->state.stream_output.output[i].register_index = mapping;
-               remapped = true;
-            }
+      struct pipe_shader_state resolved_state = gs->state;
+      for (unsigned i = 0; i < gs->state.stream_output.num_outputs; ++i) {
+         unsigned mapping = ShaderFindOutputMapping(
+            vs, gs->stream_output_register_index[i]);
+         if (mapping !=
+             resolved_state.stream_output.output[i].register_index) {
+            resolved_state.stream_output.output[i].register_index = mapping;
+            remapped = true;
          }
-         if (remapped) {
-            pipe->delete_gs_state(pipe, gs->handle);
-            gs->handle = pipe->create_gs_state(pipe, &gs->state);
+      }
+      void *old_handle = NULL;
+      if (remapped) {
+         void *new_handle = pipe->create_gs_state(pipe, &resolved_state);
+         if (!new_handle) {
+            YTTRIUM_WARN("yttrium: d3d10umd stream-output state remap failed\n");
+            SetError(hDevice, E_OUTOFMEMORY);
+            return false;
          }
-         gs->output_resolved = true;
+         old_handle = gs->handle;
+         gs->state.stream_output = resolved_state.stream_output;
+         gs->handle = new_handle;
       }
       pipe->bind_gs_state(pipe, gs->handle);
+      if (old_handle)
+         pipe->delete_gs_state(pipe, old_handle);
    }
    update_velems(pDevice);
 
@@ -175,6 +184,8 @@ ResolveState(Device *pDevice)
                              pDevice->vertex_buffers);
       pDevice->vbuffers_changed = false;
    }
+
+   return true;
 }
 
 
@@ -221,7 +232,8 @@ Draw(D3D10DDI_HDEVICE hDevice,   // IN
 
    Device *pDevice = CastDevice(hDevice);
 
-   ResolveState(pDevice);
+   if (!ResolveState(hDevice, pDevice))
+      return;
    if (RunVertexShaderEmulation(pDevice, VertexCount))
       return;
    if (RunPixelShaderEmulation(pDevice))
@@ -271,7 +283,11 @@ DrawIndexed(D3D10DDI_HDEVICE hDevice,  // IN
                                   &restart_index, &index_size, &ib_offset);
    }
 
-   ResolveState(pDevice);
+   if (!ResolveState(hDevice, pDevice)) {
+      if (null_ib)
+         pipe_resource_reference(&null_ib, NULL);
+      return;
+   }
    if (RunPixelShaderEmulation(pDevice)) {
       if (null_ib)
          pipe_resource_reference(&null_ib, NULL);
@@ -322,7 +338,8 @@ DrawInstanced(D3D10DDI_HDEVICE hDevice,      // IN
       return;
    }
 
-   ResolveState(pDevice);
+   if (!ResolveState(hDevice, pDevice))
+      return;
    if (RunPixelShaderEmulation(pDevice))
       return;
 
@@ -379,7 +396,11 @@ DrawIndexedInstanced(D3D10DDI_HDEVICE hDevice,   // IN
                                   &restart_index, &index_size, &ib_offset);
    }
 
-   ResolveState(pDevice);
+   if (!ResolveState(hDevice, pDevice)) {
+      if (null_ib)
+         pipe_resource_reference(&null_ib, NULL);
+      return;
+   }
    if (RunPixelShaderEmulation(pDevice)) {
       if (null_ib)
          pipe_resource_reference(&null_ib, NULL);
@@ -432,7 +453,8 @@ DrawIndexedInstancedIndirect(D3D10DDI_HDEVICE hDevice,
    }
 
    if (pDevice->index_buffer && pDevice->index_size && !pDevice->ib_offset) {
-      ResolveState(pDevice);
+      if (!ResolveState(hDevice, pDevice))
+         return;
       if (RunPixelShaderEmulation(pDevice))
          return;
 
@@ -493,7 +515,8 @@ DrawInstancedIndirect(D3D10DDI_HDEVICE hDevice,
       return;
    }
 
-   ResolveState(pDevice);
+   if (!ResolveState(hDevice, pDevice))
+      return;
    if (RunPixelShaderEmulation(pDevice))
       return;
 
@@ -544,7 +567,8 @@ DrawAuto(D3D10DDI_HDEVICE hDevice)  // IN
 
    assert(pDevice->primitive < MESA_PRIM_COUNT);
 
-   ResolveState(pDevice);
+   if (!ResolveState(hDevice, pDevice))
+      return;
    if (RunPixelShaderEmulation(pDevice))
       return;
 
