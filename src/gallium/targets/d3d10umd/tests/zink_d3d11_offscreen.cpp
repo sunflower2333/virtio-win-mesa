@@ -7,9 +7,13 @@
 #include <windows.h>
 #include <wrl/client.h>
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+#include "tri_ps_4_0.h"
+#include "tri_vs_4_0.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -17,7 +21,25 @@ namespace {
 
 constexpr UINT kWidth = 64;
 constexpr UINT kHeight = 64;
-constexpr uint64_t kExpectedChecksum = 2088960;
+constexpr uint64_t kExpectedChecksum = 3133440;
+
+struct Vertex {
+   FLOAT position[4];
+   FLOAT color[4];
+};
+
+constexpr Vertex kFullscreenTriangle[] = {
+   {{-1.0f, -1.0f, 0.5f, 1.0f}, {0.0f, 1.0f, 1.0f, 1.0f}},
+   {{3.0f, -1.0f, 0.5f, 1.0f}, {0.0f, 1.0f, 1.0f, 1.0f}},
+   {{-1.0f, 3.0f, 0.5f, 1.0f}, {0.0f, 1.0f, 1.0f, 1.0f}},
+};
+
+const D3D11_INPUT_ELEMENT_DESC kInputElements[] = {
+   {"POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0,
+    offsetof(Vertex, position), D3D11_INPUT_PER_VERTEX_DATA, 0},
+   {"COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, offsetof(Vertex, color),
+    D3D11_INPUT_PER_VERTEX_DATA, 0},
+};
 
 struct LoadedModule {
    HMODULE handle;
@@ -103,8 +125,57 @@ main()
    if (FAILED(result))
       return fail("CreateRenderTargetView", result);
 
+   context->OMSetRenderTargets(1, render_target_view.GetAddressOf(), nullptr);
+
    const FLOAT red[] = {1.0f, 0.0f, 0.0f, 1.0f};
    context->ClearRenderTargetView(render_target_view.Get(), red);
+
+   ComPtr<ID3D11VertexShader> vertex_shader;
+   result = device->CreateVertexShader(g_VS, sizeof(g_VS), nullptr,
+                                       &vertex_shader);
+   if (FAILED(result))
+      return fail("CreateVertexShader", result);
+
+   ComPtr<ID3D11PixelShader> pixel_shader;
+   result = device->CreatePixelShader(g_PS, sizeof(g_PS), nullptr,
+                                      &pixel_shader);
+   if (FAILED(result))
+      return fail("CreatePixelShader", result);
+
+   ComPtr<ID3D11InputLayout> input_layout;
+   result = device->CreateInputLayout(kInputElements, ARRAYSIZE(kInputElements),
+                                      g_VS, sizeof(g_VS), &input_layout);
+   if (FAILED(result))
+      return fail("CreateInputLayout", result);
+
+   D3D11_BUFFER_DESC vertex_desc = {};
+   vertex_desc.ByteWidth = static_cast<UINT>(sizeof(kFullscreenTriangle));
+   vertex_desc.Usage = D3D11_USAGE_IMMUTABLE;
+   vertex_desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+   D3D11_SUBRESOURCE_DATA vertex_data = {};
+   vertex_data.pSysMem = kFullscreenTriangle;
+
+   ComPtr<ID3D11Buffer> vertex_buffer;
+   result = device->CreateBuffer(&vertex_desc, &vertex_data, &vertex_buffer);
+   if (FAILED(result))
+      return fail("CreateBuffer(vertex)", result);
+
+   D3D11_VIEWPORT viewport = {};
+   viewport.Width = static_cast<FLOAT>(kWidth);
+   viewport.Height = static_cast<FLOAT>(kHeight);
+   viewport.MaxDepth = 1.0f;
+
+   const UINT stride = sizeof(Vertex);
+   const UINT offset = 0;
+   context->IASetInputLayout(input_layout.Get());
+   context->IASetVertexBuffers(0, 1, vertex_buffer.GetAddressOf(), &stride,
+                               &offset);
+   context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+   context->RSSetViewports(1, &viewport);
+   context->VSSetShader(vertex_shader.Get(), nullptr, 0);
+   context->PSSetShader(pixel_shader.Get(), nullptr, 0);
+   context->Draw(ARRAYSIZE(kFullscreenTriangle), 0);
 
    D3D11_TEXTURE2D_DESC staging_desc = render_desc;
    staging_desc.Usage = D3D11_USAGE_STAGING;
@@ -138,7 +209,7 @@ main()
          const uint8_t *pixel = row + static_cast<size_t>(x) * 4;
          checksum += pixel[0] + pixel[1] + pixel[2] + pixel[3];
          if (invalid_x == kWidth &&
-             (pixel[0] != 255 || pixel[1] != 0 || pixel[2] != 0 ||
+             (pixel[0] != 0 || pixel[1] != 255 || pixel[2] != 255 ||
               pixel[3] != 255)) {
             invalid_x = x;
             invalid_y = y;
@@ -158,7 +229,7 @@ main()
       return EXIT_FAILURE;
    }
 
-   printf("Zink D3D11 offscreen probe: PASS feature_level=0x%x checksum=%llu\n",
+   printf("Zink D3D11 offscreen draw probe: PASS feature_level=0x%x checksum=%llu\n",
           static_cast<unsigned>(feature_level),
           static_cast<unsigned long long>(checksum));
    return EXIT_SUCCESS;

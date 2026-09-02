@@ -84,10 +84,26 @@ require(probe_text, 'LoadLibraryExW(L"viogpud3d-zink.dll"', probe)
 require(probe_text, "D3D_DRIVER_TYPE_SOFTWARE", probe)
 require(probe_text, "D3D11CreateDevice(", probe)
 require(probe_text, "DXGI_FORMAT_R8G8B8A8_UNORM", probe)
+require(probe_text, '#include "tri_vs_4_0.h"', probe)
+require(probe_text, '#include "tri_ps_4_0.h"', probe)
+require(probe_text, "CreateVertexShader(g_VS, sizeof(g_VS)", probe)
+require(probe_text, "CreatePixelShader(g_PS, sizeof(g_PS)", probe)
+require(probe_text, "CreateInputLayout(kInputElements", probe)
+require(probe_text, "D3D11_USAGE_IMMUTABLE", probe)
+require(probe_text, "D3D11_BIND_VERTEX_BUFFER", probe)
+require(probe_text, "OMSetRenderTargets", probe)
 require(probe_text, "ClearRenderTargetView", probe)
+require(probe_text, "IASetInputLayout", probe)
+require(probe_text, "IASetVertexBuffers", probe)
+require(probe_text, "D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST", probe)
+require(probe_text, "RSSetViewports", probe)
+require(probe_text, "VSSetShader", probe)
+require(probe_text, "PSSetShader", probe)
+require(probe_text, "Draw(ARRAYSIZE(kFullscreenTriangle), 0)", probe)
 require(probe_text, "CopyResource", probe)
 require(probe_text, "D3D11_MAP_READ", probe)
-require(probe_text, "kExpectedChecksum = 2088960", probe)
+require(probe_text, "pixel[0] != 0 || pixel[1] != 255 || pixel[2] != 255", probe)
+require(probe_text, "kExpectedChecksum = 3133440", probe)
 require(workflow_text, "viogpud3d-zink zink_d3d11_offscreen", workflow)
 require(workflow_text, "artifact/zink_d3d11_offscreen.exe", workflow)
 require(workflow_text, "$files.Count -ne 2", workflow)
@@ -104,9 +120,35 @@ require(
 for header in ("d3d10umddi.h", "d3dumddi.h", "d3dkmddi.h"):
     require(workflow_text, header, workflow)
 
-for forbidden in ("CreateSwapChain", "CreateDeviceAndSwapChain", "Present("):
+for forbidden in (
+    "CreateSwapChain",
+    "CreateDeviceAndSwapChain",
+    "D3DCompile",
+    "Present(",
+):
     if forbidden in probe_text:
         raise AssertionError(f"offscreen probe contains forbidden {forbidden!r}")
+
+draw_order = (
+    "OMSetRenderTargets",
+    "ClearRenderTargetView",
+    "CreateVertexShader",
+    "CreatePixelShader",
+    "CreateInputLayout",
+    "CreateBuffer(&vertex_desc",
+    "IASetInputLayout",
+    "IASetVertexBuffers",
+    "IASetPrimitiveTopology",
+    "RSSetViewports",
+    "VSSetShader",
+    "PSSetShader",
+    "Draw(ARRAYSIZE(kFullscreenTriangle), 0)",
+    "CopyResource",
+    "Map(staging.Get()",
+)
+draw_positions = [probe_text.index(fragment) for fragment in draw_order]
+if draw_positions != sorted(draw_positions):
+    raise AssertionError("offscreen shader draw/readback order is invalid")
 
 guard = resource_text.index(
     "whandle->type == WINSYS_HANDLE_TYPE_D3DKMT_ALLOC"

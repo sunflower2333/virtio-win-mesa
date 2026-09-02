@@ -66,9 +66,11 @@ and must not be installed as the display UMD until its ARM64 and Windows gates
 pass.
 
 The `zink_d3d11_offscreen.exe` probe loads `viogpud3d-zink.dll` from its
-application directory, clears a 64x64 RGBA8 render target to red, copies it to
-a staging texture, and validates every mapped pixel plus checksum `2088960`.
-It creates no window or swap chain and does not call DXGI Present.
+application directory, clears a 64x64 RGBA8 render target to red, then creates
+SM4 vertex and pixel shaders and draws an opaque cyan fullscreen triangle. It
+copies the completed target to a staging texture and validates every mapped
+pixel plus checksum `3133440`. It creates no window or swap chain, does not
+compile shaders at runtime, and does not call DXGI Present.
 
 ## Yttrium configuration
 
