@@ -34,10 +34,12 @@ def function_body(text: str, signature: str, source: Path) -> str:
 
 
 device = ROOT / "src/gallium/frontends/d3d10umd/Device.cpp"
+rasterizer = ROOT / "src/gallium/frontends/d3d10umd/Rasterizer.cpp"
 shader = ROOT / "src/gallium/frontends/d3d10umd/Shader.cpp"
 workflow = ROOT / ".github/workflows/windows-zink-d3d10umd-arm64.yml"
 
 device_text = device.read_text(encoding="utf-8")
+rasterizer_text = rasterizer.read_text(encoding="utf-8")
 shader_text = shader.read_text(encoding="utf-8")
 workflow_text = workflow.read_text(encoding="utf-8")
 
@@ -47,6 +49,9 @@ failure = function_body(
     device,
 )
 for fragment in (
+    "if (pDevice->default_rasterizer_discard_state)",
+    "pipe->delete_rasterizer_state(",
+    "pDevice->default_rasterizer_discard_state = NULL;",
     "if (pDevice->default_depth_stencil_state)",
     "pipe->delete_depth_stencil_alpha_state(",
     "pDevice->default_depth_stencil_state = NULL;",
@@ -67,6 +72,7 @@ for fragment in (
 ):
     require(failure, fragment, device)
 
+rasterizer_cleanup = failure.index("pipe->delete_rasterizer_state")
 depth_cleanup = failure.index("pipe->delete_depth_stencil_alpha_state")
 fragment_cleanup = failure.index("DeleteEmptyShader(pDevice, MESA_SHADER_FRAGMENT")
 vertex_cleanup = failure.index("DeleteEmptyShader(pDevice, MESA_SHADER_VERTEX")
@@ -76,7 +82,8 @@ screen_cleanup = failure.index("screen->destroy")
 mutex_cleanup = failure.index("mtx_destroy")
 oom = failure.index("return E_OUTOFMEMORY;")
 if not (
-    depth_cleanup
+    rasterizer_cleanup
+    < depth_cleanup
     < fragment_cleanup
     < vertex_cleanup
     < cso_cleanup
@@ -110,7 +117,16 @@ depth_failure = create.index(
 depth_rollback = create.index(
     "return FailDevicePipelineStateCreation(pDevice);", depth_failure
 )
-bind_vertex = create.index("pipe->bind_vs_state", depth_failure)
+rasterizer_create = create.index(
+    "pipe->create_rasterizer_state(pipe, &default_rasterizer)", depth_failure
+)
+rasterizer_failure = create.index(
+    "if (!pDevice->default_rasterizer_discard_state)", rasterizer_create
+)
+rasterizer_rollback = create.index(
+    "return FailDevicePipelineStateCreation(pDevice);", rasterizer_failure
+)
+bind_vertex = create.index("pipe->bind_vs_state", rasterizer_failure)
 if not (
     vertex_create
     < vertex_failure
@@ -121,15 +137,31 @@ if not (
     < depth_create
     < depth_failure
     < depth_rollback
+    < rasterizer_create
+    < rasterizer_failure
+    < rasterizer_rollback
     < bind_vertex
 ):
     raise AssertionError("default pipeline failures are not checked before bind")
 
 failure_calls = create.count("return FailDevicePipelineStateCreation(pDevice);")
-if failure_calls != 3:
+if failure_calls != 4:
     raise AssertionError(
-        f"expected three default pipeline rollback calls, found {failure_calls}"
+        f"expected four default pipeline rollback calls, found {failure_calls}"
     )
+
+apply_rasterizer = function_body(
+    rasterizer_text,
+    "ApplyRasterizerState(Device *pDevice)",
+    rasterizer,
+)
+require(
+    apply_rasterizer,
+    "handle = discard ? pDevice->default_rasterizer_discard_state : NULL;",
+    rasterizer,
+)
+if "create_rasterizer_state" in apply_rasterizer:
+    raise AssertionError("rasterizer discard state is still allocated lazily")
 
 empty_shader = function_body(shader_text, "CreateEmptyShader(Device *pDevice", shader)
 if "assert(handle);" in empty_shader:

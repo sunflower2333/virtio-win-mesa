@@ -38,25 +38,6 @@
 
 #include "Debug.h"
 
-static void *
-GetDefaultRasterizerDiscardState(Device *pDevice)
-{
-   if (!pDevice->default_rasterizer_discard_state) {
-      struct pipe_rasterizer_state state;
-      memset(&state, 0, sizeof state);
-      state.rasterizer_discard = 1;
-      state.half_pixel_center = 1;
-      state.clip_halfz = 1;
-      state.depth_clip_near = 1;
-      state.depth_clip_far = 1;
-      state.depth_clamp = 1;
-      pDevice->default_rasterizer_discard_state =
-         pDevice->pipe->create_rasterizer_state(pDevice->pipe, &state);
-   }
-
-   return pDevice->default_rasterizer_discard_state;
-}
-
 void
 ApplyRasterizerState(Device *pDevice)
 {
@@ -68,7 +49,7 @@ ApplyRasterizerState(Device *pDevice)
    if (state) {
       handle = discard ? state->discard_handle : state->handle;
    } else {
-      handle = discard ? GetDefaultRasterizerDiscardState(pDevice) : NULL;
+      handle = discard ? pDevice->default_rasterizer_discard_state : NULL;
    }
 
    pDevice->pipe->bind_rasterizer_state(pDevice->pipe, handle);

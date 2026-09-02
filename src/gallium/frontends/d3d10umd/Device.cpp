@@ -810,6 +810,11 @@ FailDevicePipelineStateCreation(Device *pDevice)
    struct pipe_context *pipe = pDevice->pipe;
    struct pipe_screen *screen = pDevice->screen;
 
+   if (pDevice->default_rasterizer_discard_state) {
+      pipe->delete_rasterizer_state(
+         pipe, pDevice->default_rasterizer_discard_state);
+      pDevice->default_rasterizer_discard_state = NULL;
+   }
    if (pDevice->default_depth_stencil_state) {
       pipe->delete_depth_stencil_alpha_state(
          pipe, pDevice->default_depth_stencil_state);
@@ -1002,6 +1007,22 @@ CreateDevice(D3D10DDI_HADAPTER hAdapter,                 // IN
       pipe->create_depth_stencil_alpha_state(pipe, &default_dsa);
    if (!pDevice->default_depth_stencil_state) {
       DebugPrintf("%s: failed to create default depth/stencil state\n", __func__);
+      return FailDevicePipelineStateCreation(pDevice);
+   }
+
+   struct pipe_rasterizer_state default_rasterizer;
+   memset(&default_rasterizer, 0, sizeof default_rasterizer);
+   default_rasterizer.rasterizer_discard = 1;
+   default_rasterizer.half_pixel_center = 1;
+   default_rasterizer.clip_halfz = 1;
+   default_rasterizer.depth_clip_near = 1;
+   default_rasterizer.depth_clip_far = 1;
+   default_rasterizer.depth_clamp = 1;
+   pDevice->default_rasterizer_discard_state =
+      pipe->create_rasterizer_state(pipe, &default_rasterizer);
+   if (!pDevice->default_rasterizer_discard_state) {
+      DebugPrintf("%s: failed to create default rasterizer discard state\n",
+                  __func__);
       return FailDevicePipelineStateCreation(pDevice);
    }
 
