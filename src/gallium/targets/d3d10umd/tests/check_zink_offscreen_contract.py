@@ -124,7 +124,7 @@ require(
     "indirect_desc.ByteWidth = static_cast<UINT>(sizeof(indirect_args))",
     probe,
 )
-require(probe_text, "indirect_desc.Usage = D3D11_USAGE_IMMUTABLE", probe)
+require(probe_text, "indirect_desc.Usage = D3D11_USAGE_DEFAULT", probe)
 require(
     probe_text,
     "indirect_desc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS",

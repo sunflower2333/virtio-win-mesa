@@ -560,7 +560,11 @@ main()
 
    D3D11_BUFFER_DESC indirect_desc = {};
    indirect_desc.ByteWidth = static_cast<UINT>(sizeof(indirect_args));
-   indirect_desc.Usage = D3D11_USAGE_IMMUTABLE;
+   /* The runtime rejects D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS on anything but
+    * D3D11_USAGE_DEFAULT, so IMMUTABLE here failed CreateBuffer with
+    * E_INVALIDARG before either draw ran and hid the render results this probe
+    * exists to measure. */
+   indirect_desc.Usage = D3D11_USAGE_DEFAULT;
    indirect_desc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
 
    D3D11_SUBRESOURCE_DATA indirect_data = {};
