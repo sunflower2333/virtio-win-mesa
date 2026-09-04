@@ -65,12 +65,28 @@ base_body = function_body(
 )
 validation = base_body.find("ValidateMultisampleQualityLevelsQuery(")
 single_sample = base_body.find("if (SampleCount == 1)")
-msaa_format = base_body.find("if (!IsYttriumMsaaFormat(Format)")
-if min(validation, single_sample, msaa_format) < 0:
+if min(validation, single_sample) < 0:
     raise AssertionError("missing base multisample query sequence")
-if not validation < single_sample < msaa_format:
-    raise AssertionError("sample-count-one handling must precede MSAA filtering")
+if not validation < single_sample:
+    raise AssertionError("validation must precede sample-count-one handling")
 require(base_body, "*pNumQualityLevels = 1;", device)
+
+# This entry decides whether a D3D11 device can be created at all.  Measured on
+# Windows 11 ARM64 against a WDDM adapter carrying Turnip: with the screen query
+# in place D3D11CreateDevice returns DXGI_ERROR_DRIVER_INTERNAL_ERROR for every
+# feature level, and replacing only this one device function table entry makes
+# the same call succeed at feature level 11_0.  Keep the query out until the
+# underlying fault is found.
+for screen_query in (
+    "CastPipeContext(",
+    "IsYttriumMsaaFormatSupported(",
+    "is_format_supported_with_fallback(",
+):
+    if screen_query in base_body:
+        raise AssertionError(
+            "CheckMultisampleQualityLevels must not query the screen: "
+            f"{screen_query} breaks D3D11 device creation"
+        )
 
 wddm_body = function_body(
     device_text,
