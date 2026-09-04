@@ -1579,6 +1579,27 @@ ttn_tex(struct ttn_compile *c, nir_def **src)
       op = nir_texop_txf;
       num_srcs = 1;
       break;
+   /* The SAMPLE family carries the resource in Src[1] and the sampler in
+    * Src[2], so `samp` stays 1 and any extra operand starts at Src[3].  This is
+    * what a D3D10-style front end emits for every texture fetch, and without
+    * these four cases such a shader reached the default arm and aborted the
+    * process. */
+   case TGSI_OPCODE_SAMPLE:
+      op = nir_texop_tex;
+      num_srcs = 1;
+      break;
+   case TGSI_OPCODE_SAMPLE_B:
+      op = nir_texop_txb;
+      num_srcs = 2;
+      break;
+   case TGSI_OPCODE_SAMPLE_L:
+      op = nir_texop_txl;
+      num_srcs = 2;
+      break;
+   case TGSI_OPCODE_SAMPLE_D:
+      op = nir_texop_txd;
+      num_srcs = 3;
+      break;
    case TGSI_OPCODE_TXD:
       op = nir_texop_txd;
       num_srcs = 3;
@@ -1650,6 +1671,10 @@ ttn_tex(struct ttn_compile *c, nir_def **src)
       assert(tgsi_inst->Instruction.Opcode == TGSI_OPCODE_LODQ ||
              tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_I ||
              tgsi_inst->Instruction.Opcode == TGSI_OPCODE_TG4 ||
+             tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE ||
+             tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_B ||
+             tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_L ||
+             tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_D ||
              tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_C ||
              tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_C_LZ);
       sview = tgsi_inst->Src[samp].Register.Index;
@@ -1736,6 +1761,29 @@ ttn_tex(struct ttn_compile *c, nir_def **src)
    if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_C_LZ) {
       instr->src[src_number].src = nir_src_for_ssa(nir_imm_int(b, 0));
       instr->src[src_number].src_type = nir_tex_src_lod;
+      src_number++;
+   }
+
+   if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_B) {
+      instr->src[src_number] = nir_tex_src_for_ssa(nir_tex_src_bias,
+                                                   ttn_channel(b, src[3], X));
+      src_number++;
+   }
+
+   if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_L) {
+      instr->src[src_number] = nir_tex_src_for_ssa(nir_tex_src_lod,
+                                                   ttn_channel(b, src[3], X));
+      src_number++;
+   }
+
+   if (tgsi_inst->Instruction.Opcode == TGSI_OPCODE_SAMPLE_D) {
+      instr->src[src_number] =
+         nir_tex_src_for_ssa(nir_tex_src_ddx,
+               nir_trim_vector(b, src[3], instr->coord_components));
+      src_number++;
+      instr->src[src_number] =
+         nir_tex_src_for_ssa(nir_tex_src_ddy,
+               nir_trim_vector(b, src[4], instr->coord_components));
       src_number++;
    }
 
@@ -2596,6 +2644,10 @@ ttn_emit_instruction(struct ttn_compile *c)
    case TGSI_OPCODE_TXF_LZ:
    case TGSI_OPCODE_TG4:
    case TGSI_OPCODE_LODQ:
+   case TGSI_OPCODE_SAMPLE:
+   case TGSI_OPCODE_SAMPLE_B:
+   case TGSI_OPCODE_SAMPLE_L:
+   case TGSI_OPCODE_SAMPLE_D:
    case TGSI_OPCODE_SAMPLE_I:
    case TGSI_OPCODE_SAMPLE_INFO:
    case TGSI_OPCODE_SAMPLE_C:
