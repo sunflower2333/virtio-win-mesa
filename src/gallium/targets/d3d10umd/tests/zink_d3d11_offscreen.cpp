@@ -4,6 +4,7 @@
  */
 
 #include <d3d11.h>
+#include <dxgi.h>
 #include <windows.h>
 #include <wrl/client.h>
 
@@ -423,14 +424,40 @@ main()
        !set_environment(L"D3D_ALWAYS_SOFTWARE", nullptr))
       return EXIT_FAILURE;
 
-   LoadedModule software_module = {
-      LoadLibraryExW(L"viogpud3d-zink.dll", nullptr,
-                     LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
-                        LOAD_LIBRARY_SEARCH_SYSTEM32),
-   };
-   if (!software_module.handle)
-      return fail("LoadLibraryExW(viogpud3d-zink.dll)",
-                  HRESULT_FROM_WIN32(GetLastError()));
+   /* D3D_DRIVER_TYPE_SOFTWARE with a loaded module is the historical way to
+    * exercise this driver, but modern Windows rejects it with E_INVALIDARG.
+    * When ZINK_D3D11_HARDWARE_ADAPTER names a DXGI adapter index, drive the
+    * installed driver as a real hardware adapter instead, which is how the
+    * frontend actually runs once it is registered as UserModeDriverName. */
+   wchar_t adapter_env[16] = {};
+   const DWORD adapter_env_len =
+      GetEnvironmentVariableW(L"ZINK_D3D11_HARDWARE_ADAPTER", adapter_env,
+                              ARRAYSIZE(adapter_env));
+   const bool use_hardware_adapter = adapter_env_len > 0;
+
+   LoadedModule software_module = {};
+   ComPtr<IDXGIAdapter> hardware_adapter;
+   if (use_hardware_adapter) {
+      const UINT adapter_index = (UINT)_wtoi(adapter_env);
+      ComPtr<IDXGIFactory> factory;
+      HRESULT hr = CreateDXGIFactory(__uuidof(IDXGIFactory), (void **)&factory);
+      if (FAILED(hr))
+         return fail("CreateDXGIFactory", hr);
+      hr = factory->EnumAdapters(adapter_index, &hardware_adapter);
+      if (FAILED(hr))
+         return fail("IDXGIFactory::EnumAdapters", hr);
+      DXGI_ADAPTER_DESC desc = {};
+      hardware_adapter->GetDesc(&desc);
+      fwprintf(stdout, L"adapter[%u] %s\n", adapter_index, desc.Description);
+   } else {
+      software_module.handle =
+         LoadLibraryExW(L"viogpud3d-zink.dll", nullptr,
+                        LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+                           LOAD_LIBRARY_SEARCH_SYSTEM32);
+      if (!software_module.handle)
+         return fail("LoadLibraryExW(viogpud3d-zink.dll)",
+                     HRESULT_FROM_WIN32(GetLastError()));
+   }
 
    const D3D_FEATURE_LEVEL requested_levels[] = {
       D3D_FEATURE_LEVEL_11_0,
@@ -441,7 +468,9 @@ main()
    ComPtr<ID3D11Device> device;
    ComPtr<ID3D11DeviceContext> context;
    HRESULT result = D3D11CreateDevice(
-      nullptr, D3D_DRIVER_TYPE_SOFTWARE, software_module.handle, 0,
+      use_hardware_adapter ? hardware_adapter.Get() : nullptr,
+      use_hardware_adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_SOFTWARE,
+      software_module.handle, 0,
       requested_levels, ARRAYSIZE(requested_levels), D3D11_SDK_VERSION,
       &device, &feature_level, &context);
    if (FAILED(result))

@@ -44,7 +44,7 @@ if with_gallium_zink
     'zink_d3d11_offscreen',
     files('tests/zink_d3d11_offscreen.cpp'),
     cpp_args : [cpp_msvc_compat_args],
-    dependencies : [cpp.find_library('d3d11')],
+    dependencies : [cpp.find_library('d3d11'), cpp.find_library('dxgi')],
     install : false,
   )
 endif
