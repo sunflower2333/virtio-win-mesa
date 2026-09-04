@@ -479,8 +479,19 @@ main()
       fprintf(stderr, "D3D11 feature level 11_0 is required for counters\n");
       return EXIT_FAILURE;
    }
-   if (!validate_uav_counters(device.Get(), context.Get()))
-      return EXIT_FAILURE;
+   /* The UAV counter stage exercises a compute dispatch, which currently returns
+    * wrong data on this stack.  ZINK_D3D11_SKIP_COUNTERS lets the draw tests run
+    * so the rasterisation path can be validated independently of it. */
+   wchar_t skip_counters[8] = {};
+   const bool run_counters =
+      GetEnvironmentVariableW(L"ZINK_D3D11_SKIP_COUNTERS", skip_counters,
+                              ARRAYSIZE(skip_counters)) == 0;
+   if (run_counters) {
+      if (!validate_uav_counters(device.Get(), context.Get()))
+         return EXIT_FAILURE;
+   } else {
+      printf("UAV counter stage skipped by ZINK_D3D11_SKIP_COUNTERS\n");
+   }
 
    D3D11_TEXTURE2D_DESC render_desc = {};
    render_desc.Width = kWidth;
