@@ -2026,17 +2026,23 @@ CheckMultisampleQualityLevels(D3D10DDI_HDEVICE hDevice,        // IN
       return;
    }
 
-   if (!IsYttriumMsaaFormat(Format) ||
-       IsYttriumMsaaDepthStencilLoadOnlyFormat(Format) ||
-       !IsYttriumMsaaSampleCount(SampleCount))
-      return;
-
-   struct pipe_context *pipe = CastPipeContext(hDevice);
-   if (!pipe || !pipe->screen)
-      return;
-
-   if (IsYttriumMsaaFormatSupported(pipe->screen, Format, SampleCount))
-      *pNumQualityLevels = 1;
+   /* Asking the screen about a multisampled format breaks D3D11 device
+    * creation on this stack.  Measured on Windows 11 ARM64 against the WDDM
+    * Turnip adapter: with this function left as it was, D3D11CreateDevice
+    * returns DXGI_ERROR_DRIVER_INTERNAL_ERROR for every feature level, while
+    * replacing only this one entry in the device function table -- everything
+    * else untouched -- makes the same call succeed at feature level 11_0.
+    * Reporting multisample support without consulting the screen also succeeds,
+    * so it is the screen query itself and not the value that is fatal.
+    * CheckFormatSupport queries the same screen without trouble, so the fault
+    * is specific to is_format_supported with a sample count above one, which
+    * reaches zink and then Turnip.
+    *
+    * Until that path is fixed, report no multisample quality levels rather than
+    * take the adapter down with it.  Feature level 11_0 is still granted, and
+    * applications fall back to single-sampled rendering instead of failing to
+    * create a device at all. */
+   (void)hDevice;
 }
 
 
