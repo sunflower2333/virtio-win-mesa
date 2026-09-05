@@ -2657,10 +2657,11 @@ sample_ureg_emit(struct ureg_program *ureg,
                  unsigned num_src,
                  struct Shader_opcode *opcode,
                  struct ureg_dst dst,
-                 struct ureg_src *src)
+                 struct ureg_src *src,
+                 enum tgsi_texture_type target)
 {
    sample_ureg_emit_target(ureg, tgsi_opcode, num_src, opcode, NULL, dst, src,
-                           TGSI_TEXTURE_UNKNOWN);
+                           target);
 }
 
 static void
@@ -4179,8 +4180,13 @@ Shader_tgsi_translate(const unsigned *code,
       }
 
       case D3D10_SB_OPCODE_SAMPLE:
+      {
+         unsigned resource = opcode.src[1].base.index[0].imm;
+
+         assert(opcode.src[1].base.index_dim == 1);
+         assert(resource < SHADER_MAX_RESOURCES);
+
          if (use_old_tex_ops || (st_debug & ST_DEBUG_OLD_TEX_OPS)) {
-            unsigned resource = opcode.src[1].base.index[0].imm;
             struct ureg_dst dst;
             struct ureg_dst tmp;
             struct ureg_dst tex_dst;
@@ -4210,9 +4216,10 @@ Shader_tgsi_translate(const unsigned *code,
             sample_ureg_emit(ureg, TGSI_OPCODE_SAMPLE, 3, &opcode,
                              translate_dst_operand(&sx, &opcode.dst[0],
                                                    opcode.saturate),
-                             srcreg);
+                             srcreg, sx.resources[resource].target);
          }
          break;
+      }
 
       case D3D10_SB_OPCODE_SAMPLE_C:
       {
@@ -4301,8 +4308,13 @@ Shader_tgsi_translate(const unsigned *code,
       }
 
       case D3D10_SB_OPCODE_SAMPLE_L:
+      {
+         unsigned resource = opcode.src[1].base.index[0].imm;
+
+         assert(opcode.src[1].base.index_dim == 1);
+         assert(resource < SHADER_MAX_RESOURCES);
+
          if (use_old_tex_ops || (st_debug & ST_DEBUG_OLD_TEX_OPS)) {
-            unsigned resource = opcode.src[1].base.index[0].imm;
             struct ureg_dst dst =
                translate_dst_operand(&sx, &opcode.dst[0], opcode.saturate);
             struct ureg_dst tmp;
@@ -4358,13 +4370,19 @@ Shader_tgsi_translate(const unsigned *code,
             sample_ureg_emit(ureg, TGSI_OPCODE_SAMPLE_L, 4, &opcode,
                              translate_dst_operand(&sx, &opcode.dst[0],
                                                    opcode.saturate),
-                             srcreg);
+                             srcreg, sx.resources[resource].target);
          }
          break;
+      }
 
       case D3D10_SB_OPCODE_SAMPLE_D:
+      {
+         unsigned resource = opcode.src[1].base.index[0].imm;
+
+         assert(opcode.src[1].base.index_dim == 1);
+         assert(resource < SHADER_MAX_RESOURCES);
+
          if (use_old_tex_ops || (st_debug & ST_DEBUG_OLD_TEX_OPS)) {
-            unsigned resource = opcode.src[1].base.index[0].imm;
             struct ureg_dst dst =
                translate_dst_operand(&sx, &opcode.dst[0], opcode.saturate);
             struct ureg_dst tmp;
@@ -4395,14 +4413,20 @@ Shader_tgsi_translate(const unsigned *code,
             sample_ureg_emit(ureg, TGSI_OPCODE_SAMPLE_D, 5, &opcode,
                              translate_dst_operand(&sx, &opcode.dst[0],
                                                    opcode.saturate),
-                             srcreg);
+                             srcreg, sx.resources[resource].target);
          }
          break;
+      }
 
       case D3D10_SB_OPCODE_SAMPLE_B:
+      {
+         unsigned resource = opcode.src[1].base.index[0].imm;
+
+         assert(opcode.src[1].base.index_dim == 1);
+         assert(resource < SHADER_MAX_RESOURCES);
+
          if (use_old_tex_ops || (st_debug & ST_DEBUG_OLD_TEX_OPS)) {
             struct ureg_dst r0 = ureg_DECL_temporary(ureg);
-            unsigned resource = opcode.src[1].base.index[0].imm;
             struct ureg_dst dst =
                translate_dst_operand(&sx, &opcode.dst[0], opcode.saturate);
             struct ureg_dst tmp;
@@ -4442,9 +4466,10 @@ Shader_tgsi_translate(const unsigned *code,
             sample_ureg_emit(ureg, TGSI_OPCODE_SAMPLE_B, 4, &opcode,
                              translate_dst_operand(&sx, &opcode.dst[0],
                                                    opcode.saturate),
-                             srcreg);
+                             srcreg, sx.resources[resource].target);
          }
          break;
+      }
 
       case D3D10_SB_OPCODE_SINCOS: {
          struct ureg_dst src0 = ureg_DECL_temporary(ureg);
