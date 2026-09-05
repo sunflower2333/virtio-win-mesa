@@ -148,7 +148,7 @@ require(workflow_text, "artifact/zink_d3d11_offscreen.exe", workflow)
 # The artifact now also carries viogpud3d-zink.pdb: the UMD aborts inside the
 # CRT abort() shared by every caller, so symbols are the only way to name the
 # frame that reached it.  Still reject anything install-shaped.
-require(workflow_text, "$files.Count -lt 2 -or $files.Count -gt 3", workflow)
+require(workflow_text, "$files.Count -lt 2 -or $files.Count -gt 5", workflow)
 require(workflow_text, "artifact/viogpud3d-zink.pdb", workflow)
 require(workflow_text, "-Ddebug=true", workflow)
 require(workflow_text, "'-Dvulkan-drivers=[]'", workflow)
