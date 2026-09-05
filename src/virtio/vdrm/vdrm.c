@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT
  */
 
+#include "c11/threads.h"
 #include "util/u_math.h"
 #include "util/perf/cpu_trace.h"
 
@@ -192,6 +193,8 @@ fence_before(uint32_t a, uint32_t b)
 void
 vdrm_host_sync(struct vdrm_device *vdev, const struct vdrm_ccmd_req *req)
 {
+   /* sched_yield() is POSIX-only; thrd_yield() is the portable spelling and is
+    * what the rest of the tree uses when spinning. */
    while (fence_before(vdev->shmem->seqno, req->seqno))
-      sched_yield();
+      thrd_yield();
 }
