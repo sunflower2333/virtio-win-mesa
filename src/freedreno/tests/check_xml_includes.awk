@@ -30,6 +30,10 @@ FNR == 1 {
     }
 
     relpath = FILENAME
+    # On Windows the path arrives with backslashes, so both the prefix
+    # substitution and the allowed-list lookup miss and every permitted header
+    # is reported as an error.  Normalise separators first.
+    gsub(/\\/, "/", relpath)
     sub(/^.*src\/freedreno\//, "src/freedreno/", relpath)
     if (relpath in allowed) {
         nextfile
