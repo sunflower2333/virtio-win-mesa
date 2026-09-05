@@ -426,7 +426,7 @@ jobs:
           $dest = Join-Path $env:RUNNER_TEMP 'glslang'
           New-Item -ItemType Directory -Path $dest -Force | Out-Null
           $zip = Join-Path $env:RUNNER_TEMP 'glslang.zip'
-          $url = 'https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-Release.zip'
+          $url = 'https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-x86_64-release.zip'
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
           $exe = Get-ChildItem -Path $dest -Recurse -Filter 'glslangValidator.exe' | Select-Object -First 1
