@@ -432,9 +432,14 @@ jobs:
           $exe = Get-ChildItem -Path $dest -Recurse -Filter 'glslangValidator.exe' | Select-Object -First 1
           if ($exe) {
             Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+            # PATH alone did not satisfy meson's program lookup when cross
+            # compiling, so hand the absolute path to the next step and let it
+            # name the tool in a native file.
+            Add-Content -Path $env:GITHUB_ENV -Value "GLSLANG_EXE=$($exe.FullName)"
             Write-Host "glslangValidator: $($exe.FullName)"
           } else {
-            Write-Host 'glslangValidator not found in release archive'
+            Write-Host 'glslangValidator NOT FOUND in release archive'
+            Get-ChildItem -Path $dest -Recurse -File | Select-Object -First 20 | ForEach-Object { Write-Host "  saw: $($_.FullName)" }
           }
 
       - name: Build ARM64 Turnip with symbols
@@ -469,7 +474,15 @@ jobs:
             "cpp_link_args = ['/DEBUG']"
           )
           Set-Content -LiteralPath $crossFile -Value $crossFileLines -Encoding ascii
-          meson setup $buildDir . --cross-file $crossFile `
+          $nativeFile = Join-Path $env:RUNNER_TEMP "mesa-turnip-native.ini"
+          $glslang = $env:GLSLANG_EXE
+          if (-not $glslang) { $glslang = (Get-Command glslangValidator -EA SilentlyContinue).Source }
+          Write-Host "using glslangValidator: $glslang"
+          Set-Content -LiteralPath $nativeFile -Encoding ascii -Value @(
+            '[binaries]'
+            ("glslangValidator = '" + ($glslang -replace '\\','/') + "'")
+          )
+          meson setup $buildDir . --cross-file $crossFile --native-file $nativeFile `
             --backend=ninja --buildtype=release `
             -Db_ndebug=true -Ddebug=true `
             -Dplatforms=windows `
