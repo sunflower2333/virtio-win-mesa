@@ -386,8 +386,22 @@ jobs:
           Copy-Item -LiteralPath $probe.FullName -Destination artifact
           # Publish the DLL's PDB: the UMD aborts inside the CRT abort() shared
           # by every caller, so only symbols can name the frame that reached it.
-          $pdb = Get-ChildItem -Path $buildDir -Recurse -Filter 'viogpud3d-zink.pdb' -EA SilentlyContinue | Select-Object -First 1
-          if ($pdb) { Copy-Item -LiteralPath $pdb.FullName -Destination artifact } else { Write-Host 'no PDB produced' }
+          # MSVC names the database after the link target, which meson may emit as
+          # viogpud3d-zink.pdb, viogpud3d-zink.dll.pdb or a per-target name, so
+          # match any PDB that sits beside the DLL rather than one exact name.
+          $pdb = Get-ChildItem -Path $buildDir -Recurse -Filter '*.pdb' -EA SilentlyContinue |
+                 Where-Object { $_.Name -like '*viogpud3d*' } | Select-Object -First 1
+          if (-not $pdb) {
+            $pdb = Get-ChildItem -LiteralPath $dll.DirectoryName -Filter '*.pdb' -EA SilentlyContinue | Select-Object -First 1
+          }
+          if ($pdb) {
+            Copy-Item -LiteralPath $pdb.FullName -Destination (Join-Path artifact 'viogpud3d-zink.pdb')
+            Write-Host "published PDB from $($pdb.FullName)"
+          } else {
+            Write-Host 'no PDB produced'
+            Get-ChildItem -Path $buildDir -Recurse -Filter '*.pdb' -EA SilentlyContinue |
+              Select-Object -First 10 | ForEach-Object { Write-Host "  saw pdb: $($_.FullName)" }
+          }
           Get-ChildItem -Path artifact -File |
             Sort-Object Name |
             Get-FileHash -Algorithm SHA256 |
