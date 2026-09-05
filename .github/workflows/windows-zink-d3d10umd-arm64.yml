@@ -429,7 +429,19 @@ jobs:
           $url = 'https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-x86_64-release.zip'
           Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
           Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
-          $exe = Get-ChildItem -Path $dest -Recurse -Filter 'glslangValidator.exe' | Select-Object -First 1
+          # Recent glslang releases ship the binary as glslang.exe; older ones
+          # as glslangValidator.exe.  Accept either.
+          $exe = Get-ChildItem -Path $dest -Recurse -Filter 'glslangValidator.exe' -EA SilentlyContinue | Select-Object -First 1
+          if (-not $exe) {
+            $exe = Get-ChildItem -Path $dest -Recurse -Filter 'glslang.exe' -EA SilentlyContinue | Select-Object -First 1
+            if ($exe) {
+              # meson looks up the tool by the name mesa asks for, so provide it
+              # under that name as well.
+              $alias = Join-Path $exe.DirectoryName 'glslangValidator.exe'
+              Copy-Item -LiteralPath $exe.FullName -Destination $alias -Force
+              $exe = Get-Item -LiteralPath $alias
+            }
+          }
           if ($exe) {
             Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
             # PATH alone did not satisfy meson's program lookup when cross
