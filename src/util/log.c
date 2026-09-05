@@ -142,6 +142,28 @@ mesa_log_init_once(void)
 
    mesa_log_file = stderr;
 
+#if DETECT_OS_WINDOWS
+   /* Windows had no file sink at all, so mesa_log went only to
+    * OutputDebugStringA.  That is unreachable for a session-critical process
+    * such as dwm.exe: the DBWIN shared section is per-session, so a listener
+    * started over a remote shell in session 0 never sees session 1's output,
+    * and WER will not dump the process either.  Honour MESA_LOG_FILE here too,
+    * which gives those aborts somewhere durable to land.  Appended rather than
+    * truncated because a crash-looping process reopens the file on every
+    * restart. */
+   {
+      const char *log_file = os_get_option("MESA_LOG_FILE");
+      if (log_file) {
+         FILE *fp = fopen(log_file, "a");
+         if (fp) {
+            setvbuf(fp, NULL, _IONBF, 0);
+            mesa_log_file = fp;
+            mesa_log_control |= MESA_LOG_CONTROL_FILE;
+         }
+      }
+   }
+#endif
+
 #if !DETECT_OS_WINDOWS
    if (__normal_user()) {
       FILE *fp = NULL;
