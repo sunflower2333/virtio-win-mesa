@@ -333,7 +333,7 @@ jobs:
           Set-Content -LiteralPath $crossFile -Value $crossFileLines -Encoding ascii
           meson setup $buildDir . --cross-file $crossFile `
             --backend=ninja --buildtype=release `
-            -Db_ndebug=true `
+            -Db_ndebug=true -Ddebug=true `
             -Dplatforms=windows `
             '-Dvulkan-drivers=[]' `
             -Dgallium-drivers=zink `
@@ -384,6 +384,10 @@ jobs:
           New-Item -ItemType Directory -Path artifact -Force | Out-Null
           Copy-Item -LiteralPath $dll.FullName -Destination artifact
           Copy-Item -LiteralPath $probe.FullName -Destination artifact
+          # Publish the DLL's PDB: the UMD aborts inside the CRT abort() shared
+          # by every caller, so only symbols can name the frame that reached it.
+          $pdb = Get-ChildItem -Path $buildDir -Recurse -Filter 'viogpud3d-zink.pdb' -EA SilentlyContinue | Select-Object -First 1
+          if ($pdb) { Copy-Item -LiteralPath $pdb.FullName -Destination artifact } else { Write-Host 'no PDB produced' }
           Get-ChildItem -Path artifact -File |
             Sort-Object Name |
             Get-FileHash -Algorithm SHA256 |
@@ -393,8 +397,8 @@ jobs:
         shell: pwsh
         run: |
           $files = @(Get-ChildItem -Path artifact -Recurse -File)
-          if ($files.Count -ne 2) {
-            throw "offscreen artifact must contain exactly two files, found $($files.Count)"
+          if ($files.Count -lt 2 -or $files.Count -gt 3) {
+            throw "offscreen artifact must contain the DLL, the probe and at most one PDB, found $($files.Count)"
           }
           $unexpected = @(Get-ChildItem -Path artifact -Recurse -File -Include *.inf,*.sys,*.cat)
           if ($unexpected.Count -ne 0) {
@@ -414,5 +418,6 @@ jobs:
           path: |
             artifact/viogpud3d-zink.dll
             artifact/zink_d3d11_offscreen.exe
+            artifact/viogpud3d-zink.pdb
           if-no-files-found: error
           retention-days: 7
