@@ -145,7 +145,12 @@ require(probe_text, "CreateComputeShader(\n      g_counter_producer_cs", probe)
 require(probe_text, "CreateComputeShader(\n      g_counter_consumer_cs", probe)
 require(workflow_text, "viogpud3d-zink zink_d3d11_offscreen", workflow)
 require(workflow_text, "artifact/zink_d3d11_offscreen.exe", workflow)
-require(workflow_text, "$files.Count -ne 2", workflow)
+# The artifact now also carries viogpud3d-zink.pdb: the UMD aborts inside the
+# CRT abort() shared by every caller, so symbols are the only way to name the
+# frame that reached it.  Still reject anything install-shaped.
+require(workflow_text, "$files.Count -lt 2 -or $files.Count -gt 3", workflow)
+require(workflow_text, "artifact/viogpud3d-zink.pdb", workflow)
+require(workflow_text, "-Ddebug=true", workflow)
 require(workflow_text, "'-Dvulkan-drivers=[]'", workflow)
 require(workflow_text, "'-Dtools=[]'", workflow)
 require(workflow_text, '"src/util/u_atomic.h"', workflow)
