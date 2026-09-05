@@ -329,6 +329,15 @@ jobs:
             ''
             '[properties]'
             'needs_exe_wrapper = true'
+            ''
+            '# clang-cl emits no PDB from meson''s debug option alone; /Zi at compile'
+            '# and /DEBUG at link are what actually produce one, and without it the'
+            '# abort() frame inside the UMD cannot be named.'
+            '[built-in options]'
+            "c_args = ['/Zi']"
+            "cpp_args = ['/Zi']"
+            "c_link_args = ['/DEBUG']"
+            "cpp_link_args = ['/DEBUG']"
           )
           Set-Content -LiteralPath $crossFile -Value $crossFileLines -Encoding ascii
           meson setup $buildDir . --cross-file $crossFile `
