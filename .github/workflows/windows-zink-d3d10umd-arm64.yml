@@ -499,6 +499,7 @@ jobs:
             -Db_ndebug=true -Ddebug=true `
             -Dplatforms=windows `
             '-Dvulkan-drivers=freedreno' `
+            '-Dfreedreno-kmds=virtio' `
             '-Dgallium-drivers=[]' `
             -Dopengl=false -Dgles1=disabled -Dgles2=disabled `
             -Degl=disabled -Dglx=disabled -Dgbm=disabled `
