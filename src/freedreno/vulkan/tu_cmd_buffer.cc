@@ -8420,11 +8420,17 @@ tu_draw_initiator(struct tu_cmd_buffer *cmd, enum pc_di_src_sel src_sel)
       CP_DRAW_INDX_OFFSET_0_INDEX_SIZE((enum a4xx_index_size) cmd->state.index_size) |
       CP_DRAW_INDX_OFFSET_0_VIS_CULL(USE_VISIBILITY);
 
-   if (cmd->state.shaders[MESA_SHADER_GEOMETRY]->variant)
+   /* A pipeline that binds neither a geometry nor a tessellation-evaluation
+    * stage leaves these slots null, so they must be checked before their
+    * variant is read - as the isolines test in tu6_update_msaa_disable()
+    * already does.  Reading them unconditionally faults on every draw from a
+    * client that uses neither stage. */
+   const struct tu_shader *gs = cmd->state.shaders[MESA_SHADER_GEOMETRY];
+   if (gs && gs->variant)
       initiator |= CP_DRAW_INDX_OFFSET_0_GS_ENABLE;
 
    const struct tu_shader *tes = cmd->state.shaders[MESA_SHADER_TESS_EVAL];
-   if (tes->variant) {
+   if (tes && tes->variant) {
       switch (tes->variant->key.tessellation) {
       case IR3_TESS_TRIANGLES:
          initiator |= CP_DRAW_INDX_OFFSET_0_PATCH_TYPE(TESS_TRIANGLES) |
