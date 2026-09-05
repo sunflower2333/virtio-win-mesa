@@ -416,6 +416,27 @@ jobs:
             Get-FileHash -Algorithm SHA256 |
             Format-List
 
+      - name: Provide glslangValidator for Turnip
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Turnip compiles internal shaders at build time and meson hard-fails
+          # configure without glslangValidator.  The Windows runners do not ship
+          # it, so fetch the official Khronos release build and put it on PATH.
+          $dest = Join-Path $env:RUNNER_TEMP 'glslang'
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'glslang.zip'
+          $url = 'https://github.com/KhronosGroup/glslang/releases/download/main-tot/glslang-main-windows-Release.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -LiteralPath $zip -DestinationPath $dest -Force
+          $exe = Get-ChildItem -Path $dest -Recurse -Filter 'glslangValidator.exe' | Select-Object -First 1
+          if ($exe) {
+            Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+            Write-Host "glslangValidator: $($exe.FullName)"
+          } else {
+            Write-Host 'glslangValidator not found in release archive'
+          }
+
       - name: Build ARM64 Turnip with symbols
         shell: pwsh
         continue-on-error: true
