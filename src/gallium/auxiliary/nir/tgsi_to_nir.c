@@ -23,6 +23,7 @@
  */
 
 #include "util/blob.h"
+#include "util/log.h"
 #include "util/u_debug.h"
 #include "util/disk_cache.h"
 #include "util/u_memory.h"
@@ -171,7 +172,7 @@ tgsi_varying_semantic_to_slot(unsigned semantic, unsigned index)
       assert(index < 32);
       return VARYING_SLOT_PATCH0 + index;
    default:
-      fprintf(stderr, "Bad TGSI semantic: %d/%d\n", semantic, index);
+      mesa_loge("Bad TGSI semantic: %d/%d", semantic, index);
       abort();
    }
 }
@@ -545,8 +546,8 @@ ttn_emit_declaration(struct ttn_compile *c)
                   break;
 
                default:
-                  fprintf(stderr, "Bad TGSI semantic: %d/%d\n",
-                          decl->Semantic.Name, decl->Semantic.Index);
+                  mesa_loge("Bad TGSI semantic: %d/%d",
+                            decl->Semantic.Name, decl->Semantic.Index);
                   abort();
                }
             } else {
@@ -1419,7 +1420,7 @@ get_texture_info(unsigned texture,
       *is_shadow = true;
       break;
    default:
-      fprintf(stderr, "Unknown TGSI texture target %d\n", texture);
+      mesa_loge("Unknown TGSI texture target %d", texture);
       abort();
    }
 }
@@ -1632,7 +1633,7 @@ ttn_tex(struct ttn_compile *c, nir_def **src)
       break;
 
    default:
-      fprintf(stderr, "unknown TGSI tex op %d\n", tgsi_inst->Instruction.Opcode);
+      mesa_loge("unknown TGSI tex op %d", tgsi_inst->Instruction.Opcode);
       abort();
    }
 
@@ -2744,8 +2745,8 @@ ttn_emit_instruction(struct ttn_compile *c)
       if (op_trans[tgsi_op] != 0 || tgsi_op == TGSI_OPCODE_MOV) {
          dst = ttn_alu(b, op_trans[tgsi_op], dst_bitsize, src);
       } else {
-         fprintf(stderr, "unknown TGSI opcode: %s\n",
-                 tgsi_get_opcode_name(tgsi_op));
+         mesa_loge("unknown TGSI opcode: %s",
+                   tgsi_get_opcode_name(tgsi_op));
          abort();
       }
       break;
@@ -3317,8 +3318,8 @@ ttn_compile_init(const void *tgsi_tokens,
          break;
       default:
          if (value) {
-            fprintf(stderr, "tgsi_to_nir: unhandled TGSI property %u = %u\n",
-                    i, value);
+            mesa_loge("tgsi_to_nir: unhandled TGSI property %u = %u",
+                      i, value);
             UNREACHABLE("unhandled TGSI property");
          }
       }
